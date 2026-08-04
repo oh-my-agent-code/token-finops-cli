@@ -19,19 +19,57 @@ that by reading the CLI's own local usage log and letting you supply your
 own monthly budget number (from the Copilot billing page) so it can project
 a runway estimate.
 
+## Install
+
+With [uv](https://docs.astral.sh/uv/) (recommended):
+
+```bash
+uv tool install token-finops-cli
+token-finops --since 7d
+```
+
+Or from source, editable, in a venv:
+
+```bash
+uv venv
+uv pip install -e ".[dev]"
+.venv/bin/token-finops --since 7d
+```
+
+Or plain pip:
+
+```bash
+pip install token-finops-cli
+```
+
 ## Usage
 
 ```bash
-python3 copilot_usage.py                      # full report, last 7 days
-python3 copilot_usage.py --since 30d          # last 30 days
-python3 copilot_usage.py --since all          # all-time
-python3 copilot_usage.py --session <id>       # filter to one session
+token-finops                      # full report, last 7 days
+token-finops --since 30d          # last 30 days
+token-finops --since all          # all-time
+token-finops --session <id>       # filter to one session
 
 # Budget / runway
-python3 copilot_usage.py --budget 50000 --cycle-day 1
-python3 copilot_usage.py --compact            # 2-line minimal output
-python3 copilot_usage.py --watch 5            # live-refreshing view every 5s
+token-finops --budget 50000 --cycle-day 1
+token-finops --compact            # 2-line minimal output
+token-finops --watch 5            # live-refreshing view every 5s
 ```
+
+## Try it without your own data (synthetic demo)
+
+A small script generates a throwaway SQLite DB with fake usage events (same
+columns the tool reads, nothing from your real `~/.copilot/session-store.db`
+is ever touched):
+
+```bash
+python3 examples/generate_synthetic_db.py /tmp/demo.db --days 20
+token-finops --db-path /tmp/demo.db --since 7d
+token-finops --db-path /tmp/demo.db --compact
+```
+
+Or point the tool at any DB via the `TOKEN_FINOPS_DB` env var instead of
+`--db-path`.
 
 ### Options
 
@@ -64,6 +102,12 @@ You can drop a `SKILL.md` into `~/.copilot/skills/token-finops-cli/` so any
 Copilot CLI session can answer "what's my usage/runway?" on demand by
 invoking this script. See the CLI's skills documentation for the expected
 format.
+
+## Roadmap
+
+- [ ] Support reading local usage/session logs from other coding agents
+      (e.g. Claude Code), so this becomes a general "agentic coding tool
+      finops" CLI rather than Copilot-only.
 
 ## License
 

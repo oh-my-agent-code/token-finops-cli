@@ -28,7 +28,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-DB_PATH = os.path.expanduser("~/.copilot/session-store.db")
+DEFAULT_DB_PATH = os.path.expanduser("~/.copilot/session-store.db")
 DEFAULT_BUDGET_AIU = 50_000
 
 SINCE_MAP = {
@@ -163,13 +163,13 @@ def progress_bar(fraction, width=30):
     rest of the line displays fine.
     """
     fraction = max(0.0, min(1.0, fraction))
-    filled = int(round(width * fraction))
+    filled = round(width * fraction)
     bar = "#" * filled + "-" * (width - filled)
     return f"[{bar}] {fraction * 100:5.1f}%"
 
 
 def render(args):
-    con = connect_readonly(DB_PATH)
+    con = connect_readonly(args.db_path)
     stats = fetch_stats(con, SINCE_MAP[args.since], args.session)
     runway = runway_report(con, args.budget, args.cycle_day)
     con.close()
@@ -227,14 +227,16 @@ def render_compact(args):
     """Minimal 2-line render: just the budget progress bar and a one-line
     runway summary. Meant for tiny terminal panes (e.g. a 3-line split)
     where the full report would scroll/clip."""
-    con = connect_readonly(DB_PATH)
+    con = connect_readonly(args.db_path)
     runway = runway_report(con, args.budget, args.cycle_day)
     con.close()
 
     used_fraction = runway["used_aiu"] / args.budget if args.budget else 0
     lines = [
-        f"AI budget {progress_bar(used_fraction)} "
-        f"{runway['used_aiu']:.0f}/{args.budget:.0f}",
+        (
+            f"AI budget {progress_bar(used_fraction)} "
+            f"{runway['used_aiu']:.0f}/{args.budget:.0f}"
+        ),
     ]
     if runway["runway_days"] == float("inf"):
         lines.append("runway: no usage yet this cycle")
@@ -251,6 +253,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--since", choices=SINCE_MAP.keys(), default="7d")
     parser.add_argument("--session", default=None, help="Filter to one session_id")
+    parser.add_argument(
+        "--db-path",
+        default=os.environ.get("TOKEN_FINOPS_DB", DEFAULT_DB_PATH),
+        help="Path to the session-store.db to read (default: "
+             "$TOKEN_FINOPS_DB or ~/.copilot/session-store.db). Useful for "
+             "pointing at a synthetic/demo database.",
+    )
     parser.add_argument(
         "--budget", type=float, default=DEFAULT_BUDGET_AIU,
         help=f"Monthly AI-unit budget for the runway estimate (default {DEFAULT_BUDGET_AIU})",
