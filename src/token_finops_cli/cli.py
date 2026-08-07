@@ -415,6 +415,76 @@ def render_session_detail(args):
     return "\n".join(lines)
 
 
+def aggregate_all_sessions(con, since_delta=None, gap_minutes=DEFAULT_GAP_MINUTES):
+    """Combined break/gap totals across every session matching the filter
+    (not just the ones in a --limit-truncated list). For each session,
+    reuses session_breaks() and sums up active/idle time and break counts
+    - gives a true "all sessions" picture rather than one session at a time."""
+    where = []
+    params = []
+    if since_delta is not None:
+        cutoff = (datetime.now(timezone.utc) - since_delta).isoformat()
+        where.append("created_at >= ?")
+        params.append(cutoff)
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+
+    cur = con.cursor()
+    cur.execute(
+        f"SELECT DISTINCT session_id FROM assistant_usage_events {where_clause}",
+        params,
+    )
+    session_ids = [row[0] for row in cur.fetchall()]
+
+    total_active = 0.0
+    total_idle = 0.0
+    total_breaks = 0
+    for sid in session_ids:
+        breaks, active_s, idle_s, _elapsed_s = session_breaks(con, sid, gap_minutes)
+        total_active += active_s
+        total_idle += idle_s
+        total_breaks += len(breaks)
+
+    return {
+        "session_count": len(session_ids),
+        "active_seconds": total_active,
+        "idle_seconds": total_idle,
+        "break_count": total_breaks,
+    }
+
+
+def render_sessions_totals(args):
+    """Aggregate report across ALL sessions matching --since (ignores
+    --limit, since this is meant to cover everything): total requests,
+    tokens, AI units, session count, plus combined active vs idle time
+    and break count summed across every individual session."""
+    con = connect_readonly(args.db_path)
+    since_delta = SINCE_MAP[args.since]
+    stats = fetch_stats(con, since_delta, session_id=None)
+    agg = aggregate_all_sessions(con, since_delta, args.gap_minutes)
+    con.close()
+
+    total_tokens = stats["total_input"] + stats["total_output"]
+    label = "all time" if args.since == "all" else f"last {args.since}"
+    lines = [f"All sessions report ({label}):"]
+    lines.append(f"  sessions:        {agg['session_count']}")
+    lines.append(f"  requests:        {stats['requests']}")
+    lines.append(f"  input tokens:    {format_tokens(stats['total_input'])}")
+    lines.append(f"  output tokens:   {format_tokens(stats['total_output'])}")
+    lines.append(f"  reasoning tokens:{format_tokens(stats['total_reasoning'])}")
+    lines.append(f"  total tokens:    {format_tokens(total_tokens)}")
+    lines.append("")
+    lines.append(
+        f"  active time (gaps < {args.gap_minutes:.0f}m), summed across "
+        f"all sessions: {format_duration(agg['active_seconds'])}"
+    )
+    lines.append(
+        f"  idle/paused time (gaps >= {args.gap_minutes:.0f}m), summed:  "
+        f"{format_duration(agg['idle_seconds'])}"
+    )
+    lines.append(f"  total breaks detected: {agg['break_count']}")
+    return "\n".join(lines)
+
+
 def _add_common_db_arg(p):
     p.add_argument(
         "--db-path",
@@ -471,12 +541,19 @@ def build_parser():
     )
     sessions.add_argument(
         "--limit", type=int, default=20,
-        help="Max number of sessions to list (default 20, ignored with --session)",
+        help="Max number of sessions to list (default 20, ignored with "
+             "--session/--totals)",
     )
     sessions.add_argument(
         "--gap-minutes", type=float, default=DEFAULT_GAP_MINUTES,
         help=f"Idle gap threshold in minutes to count as a 'break' in the "
-             f"detailed --session view (default {DEFAULT_GAP_MINUTES:.0f})",
+             f"detailed --session/--totals views (default {DEFAULT_GAP_MINUTES:.0f})",
+    )
+    sessions.add_argument(
+        "--totals", action="store_true",
+        help="Print one combined report aggregated across ALL sessions "
+             "matching --since (requests, tokens, AI units, and combined "
+             "active/idle/break totals), instead of a per-session list.",
     )
     _add_common_db_arg(sessions)
 
@@ -502,6 +579,8 @@ def main(argv=None):
     if args.command == "sessions":
         if args.session:
             print(render_session_detail(args))
+        elif args.totals:
+            print(render_sessions_totals(args))
         else:
             print(render_sessions_list(args))
         return

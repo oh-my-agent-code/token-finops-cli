@@ -67,6 +67,7 @@ token-finops sessions                       # list all past sessions
 token-finops sessions --since 30d --limit 10
 token-finops sessions --session <id>        # detailed break/gap report
 token-finops sessions --session <id> --gap-minutes 60
+token-finops sessions --totals              # ONE combined report across ALL sessions
 ```
 
 The detailed per-session view detects "breaks" — gaps between requests
@@ -110,6 +111,7 @@ Or point the tool at any DB via the `TOKEN_FINOPS_DB` env var instead of
 | `--limit N` | Max sessions to list (default `20`) |
 | `--session ID` | Show a detailed break/gap report for one session instead of the list |
 | `--gap-minutes N` | Idle-gap threshold in minutes to count as a "break" (default `30`) |
+| `--totals` | Print one combined report aggregated across ALL sessions matching `--since` (total requests/tokens/AI units, plus summed active/idle time and break count across every session) |
 
 ## What it measures
 

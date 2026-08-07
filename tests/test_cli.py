@@ -68,6 +68,25 @@ def test_sessions_list_against_synthetic_db(tmp_path):
     assert "demo-session-0" in result.stdout
 
 
+def test_sessions_totals_report(tmp_path):
+    from token_finops_cli.examples_helper import build_synthetic_db
+
+    db_path = tmp_path / "demo.db"
+    build_synthetic_db(str(db_path), days=10, events_per_day=5, seed=1)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "token_finops_cli.cli", "sessions",
+         "--totals", "--db-path", str(db_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "All sessions report" in result.stdout
+    assert "sessions:" in result.stdout
+    assert "total breaks detected" in result.stdout
+
+
 def test_session_breaks_detection(tmp_path):
     from token_finops_cli.cli import connect_readonly, session_breaks
     from token_finops_cli.examples_helper import build_synthetic_db
