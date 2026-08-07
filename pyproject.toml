@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "token-finops-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "Read-only CLI to monitor GitHub Copilot CLI token usage and estimate a monthly budget runway"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
