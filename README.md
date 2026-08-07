@@ -45,7 +45,7 @@ pip install token-finops-cli
 ## Usage
 
 ```bash
-token-finops                      # full report, last 7 days
+token-finops                      # full report, last 7 days (same as "report")
 token-finops --since 30d          # last 30 days
 token-finops --since all          # all-time
 token-finops --session <id>       # filter to one session
@@ -55,6 +55,25 @@ token-finops --budget 50000 --cycle-day 1
 token-finops --compact            # 2-line minimal output
 token-finops --watch 5            # live-refreshing view every 5s
 ```
+
+## Session history & break/gap reports
+
+The `sessions` subcommand gives per-session archival/historical reporting
+— useful for looking back at past sessions rather than just current
+budget status:
+
+```bash
+token-finops sessions                       # list all past sessions
+token-finops sessions --since 30d --limit 10
+token-finops sessions --session <id>        # detailed break/gap report
+token-finops sessions --session <id> --gap-minutes 60
+```
+
+The detailed per-session view detects "breaks" — gaps between requests
+longer than `--gap-minutes` (default 30) — and reports active time (time
+actually spent working) vs. idle/paused time (e.g. you closed the
+terminal and came back the next day), alongside total elapsed wall-clock
+time and a list of each pause with its start/end/duration.
 
 ## Try it without your own data (synthetic demo)
 
@@ -82,6 +101,15 @@ Or point the tool at any DB via the `TOKEN_FINOPS_DB` env var instead of
 | `--watch SECONDS` | Live-refreshing view, redraws every N seconds |
 | `--compact` / `-c` | 2-line minimal output (budget bar + runway status) |
 | `--verbose` / `-vv` | Full report (overrides `--compact`) |
+
+`sessions` subcommand options:
+
+| Flag | Description |
+|---|---|
+| `--since {1d,7d,30d,all}` | Time window for the session list (default `all`) |
+| `--limit N` | Max sessions to list (default `20`) |
+| `--session ID` | Show a detailed break/gap report for one session instead of the list |
+| `--gap-minutes N` | Idle-gap threshold in minutes to count as a "break" (default `30`) |
 
 ## What it measures
 

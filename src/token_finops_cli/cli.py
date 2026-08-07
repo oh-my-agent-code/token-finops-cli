@@ -19,13 +19,21 @@ yourself via --budget, defaulting to what you've told the agent
 (50,000), and the cycle is assumed to reset monthly on --cycle-day
 (default 1st) unless your actual billing cycle differs.
 
+Also supports a `sessions` subcommand for per-session history: list all
+past sessions with usage totals, or drill into one session_id for a
+break/gap report (detects pauses between requests, e.g. across days you
+paused and resumed) - handy for archival/relative reporting on past work.
+
 Usage:
-    python3 copilot_usage.py [--since 1d|7d|30d|all] [--session <id>]
-                              [--budget 50000] [--cycle-day 1]
+    token-finops [report] [--since 1d|7d|30d|all] [--session <id>]
+                 [--budget 50000] [--cycle-day 1]
+    token-finops sessions [--since ...] [--limit N]
+    token-finops sessions --session <id> [--gap-minutes 30]
 """
 import argparse
 import os
 import sqlite3
+import sys
 from datetime import datetime, timedelta, timezone
 
 DEFAULT_DB_PATH = os.path.expanduser("~/.copilot/session-store.db")
@@ -249,43 +257,256 @@ def render_compact(args):
     return "\n".join(lines)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--since", choices=SINCE_MAP.keys(), default="7d")
-    parser.add_argument("--session", default=None, help="Filter to one session_id")
-    parser.add_argument(
+
+DEFAULT_GAP_MINUTES = 30.0
+
+
+def list_sessions(con, since_delta=None, limit=20):
+    """Per-session summary: requests, tokens, AI units, first/last activity,
+    elapsed wall-clock span, and active time (sum of gaps below the
+    break threshold) vs idle time (gaps above it, i.e. actual pauses)."""
+    where = []
+    params = []
+    if since_delta is not None:
+        cutoff = (datetime.now(timezone.utc) - since_delta).isoformat()
+        where.append("created_at >= ?")
+        params.append(cutoff)
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+
+    cur = con.cursor()
+    cur.execute(
+        f"""
+        SELECT
+            session_id,
+            COUNT(*) AS requests,
+            COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) AS total_tokens,
+            COALESCE(SUM(total_nano_aiu), 0) / 1e9 AS aiu,
+            MIN(created_at) AS first_at,
+            MAX(created_at) AS last_at
+        FROM assistant_usage_events
+        {where_clause}
+        GROUP BY session_id
+        ORDER BY last_at DESC
+        LIMIT ?
+        """,
+        params + [limit],
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "session_id": r[0],
+            "requests": r[1],
+            "total_tokens": r[2],
+            "aiu": r[3],
+            "first_at": r[4],
+            "last_at": r[5],
+        }
+        for r in rows
+    ]
+
+
+def session_breaks(con, session_id, gap_minutes=DEFAULT_GAP_MINUTES):
+    """Detect pauses/breaks within a single session: any gap between two
+    consecutive requests larger than `gap_minutes` counts as a break.
+    Returns (events_with_gaps, active_seconds, idle_seconds, elapsed_seconds).
+    "Active" time sums only the small in-between gaps (actual working
+    time); "idle" time sums the large gaps (time you were away/paused)."""
+    cur = con.cursor()
+    cur.execute(
+        """
+        SELECT created_at FROM assistant_usage_events
+        WHERE session_id = ?
+        ORDER BY created_at
+        """,
+        (session_id,),
+    )
+    timestamps = [
+        datetime.fromisoformat(row[0].replace("Z", "+00:00"))
+        for row in cur.fetchall()
+    ]
+    if not timestamps:
+        return [], 0.0, 0.0, 0.0
+
+    gap_threshold = timedelta(minutes=gap_minutes)
+    breaks = []
+    active_seconds = 0.0
+    idle_seconds = 0.0
+    for prev, cur_ts in zip(timestamps, timestamps[1:]):
+        gap = (cur_ts - prev).total_seconds()
+        if gap >= gap_threshold.total_seconds():
+            breaks.append((prev, cur_ts, gap))
+            idle_seconds += gap
+        else:
+            active_seconds += gap
+    elapsed_seconds = (timestamps[-1] - timestamps[0]).total_seconds()
+    return breaks, active_seconds, idle_seconds, elapsed_seconds
+
+
+def format_duration(seconds):
+    seconds = int(seconds)
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h{minutes:02d}m"
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
+def render_sessions_list(args):
+    con = connect_readonly(args.db_path)
+    since_delta = SINCE_MAP[args.since]
+    sessions = list_sessions(con, since_delta, args.limit)
+
+    lines = [f"Sessions ({'all time' if args.since == 'all' else 'last ' + args.since}):"]
+    if not sessions:
+        lines.append("  (none found)")
+        con.close()
+        return "\n".join(lines)
+
+    lines.append(
+        f"  {'session_id':<38} {'reqs':>5} {'tokens':>9} {'AI units':>9}  last activity"
+    )
+    for s in sessions:
+        short_id = s["session_id"][:36]
+        last_at = s["last_at"][:19].replace("T", " ")
+        lines.append(
+            f"  {short_id:<38} {s['requests']:>5} "
+            f"{format_tokens(s['total_tokens']):>9} {s['aiu']:>9.1f}  {last_at}"
+        )
+    con.close()
+    return "\n".join(lines)
+
+
+def render_session_detail(args):
+    con = connect_readonly(args.db_path)
+    stats = fetch_stats(con, None, args.session)
+    breaks, active_s, idle_s, elapsed_s = session_breaks(
+        con, args.session, args.gap_minutes
+    )
+    con.close()
+
+    if stats["requests"] == 0:
+        return f"No events found for session {args.session}"
+
+    total_tokens = stats["total_input"] + stats["total_output"]
+    lines = [f"Session {args.session}:"]
+    lines.append(f"  requests:        {stats['requests']}")
+    lines.append(f"  input tokens:    {format_tokens(stats['total_input'])}")
+    lines.append(f"  output tokens:   {format_tokens(stats['total_output'])}")
+    lines.append(f"  reasoning tokens:{format_tokens(stats['total_reasoning'])}")
+    lines.append(f"  total tokens:    {format_tokens(total_tokens)}")
+    lines.append("")
+    lines.append(f"  elapsed (first->last request): {format_duration(elapsed_s)}")
+    lines.append(f"  active time (gaps < {args.gap_minutes:.0f}m):   {format_duration(active_s)}")
+    lines.append(f"  idle/paused time (gaps >= {args.gap_minutes:.0f}m): {format_duration(idle_s)}")
+    lines.append(f"  breaks detected: {len(breaks)}")
+    if breaks:
+        lines.append("")
+        lines.append("  Breaks (pause start -> resume, duration):")
+        for start, end, gap in breaks:
+            lines.append(
+                f"    {start.isoformat(timespec='seconds')} -> "
+                f"{end.isoformat(timespec='seconds')}  ({format_duration(gap)})"
+            )
+    return "\n".join(lines)
+
+
+def _add_common_db_arg(p):
+    p.add_argument(
         "--db-path",
         default=os.environ.get("TOKEN_FINOPS_DB", DEFAULT_DB_PATH),
         help="Path to the session-store.db to read (default: "
              "$TOKEN_FINOPS_DB or ~/.copilot/session-store.db). Useful for "
              "pointing at a synthetic/demo database.",
     )
-    parser.add_argument(
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command")
+
+    report = subparsers.add_parser(
+        "report", help="Usage summary + budget/runway report (default)"
+    )
+    report.add_argument("--since", choices=SINCE_MAP.keys(), default="7d")
+    report.add_argument("--session", default=None, help="Filter to one session_id")
+    _add_common_db_arg(report)
+    report.add_argument(
         "--budget", type=float, default=DEFAULT_BUDGET_AIU,
         help=f"Monthly AI-unit budget for the runway estimate (default {DEFAULT_BUDGET_AIU})",
     )
-    parser.add_argument(
+    report.add_argument(
         "--cycle-day", type=int, default=1,
         help="Day of month your billing cycle resets on (default 1st)",
     )
-    parser.add_argument(
+    report.add_argument(
         "--watch", type=float, default=None, metavar="SECONDS",
         help="Keep running, redrawing the report every SECONDS (e.g. --watch 30). "
              "Meant for a spare terminal pane/tmux split, not the Copilot session itself.",
     )
-    parser.add_argument(
+    report.add_argument(
         "--compact", "-c", action="store_true",
         help="Print only the budget progress bar + one-line runway summary "
              "(2 lines total) instead of the full report. Good for tiny "
              "terminal panes/splits.",
     )
-    parser.add_argument(
+    report.add_argument(
         "--verbose", "-vv", action="store_true",
         help="Explicitly request the full report (this is the default; "
              "provided as the counterpart to --compact/-c).",
     )
-    args = parser.parse_args()
 
+    sessions = subparsers.add_parser(
+        "sessions", help="List past sessions, or show break/gap detail for one"
+    )
+    sessions.add_argument("--since", choices=SINCE_MAP.keys(), default="all")
+    sessions.add_argument(
+        "--session", default=None,
+        help="Show a detailed break/gap report for this one session_id "
+             "instead of the list",
+    )
+    sessions.add_argument(
+        "--limit", type=int, default=20,
+        help="Max number of sessions to list (default 20, ignored with --session)",
+    )
+    sessions.add_argument(
+        "--gap-minutes", type=float, default=DEFAULT_GAP_MINUTES,
+        help=f"Idle gap threshold in minutes to count as a 'break' in the "
+             f"detailed --session view (default {DEFAULT_GAP_MINUTES:.0f})",
+    )
+    _add_common_db_arg(sessions)
+
+    return parser
+
+
+def _normalize_argv(argv):
+    """Insert the "report" subcommand by default, so plain flag usage
+    (e.g. `token-finops --since 30d`) keeps working exactly as it did
+    before subcommands were introduced. Only "sessions" opts out."""
+    if not argv:
+        return ["report"]
+    if argv[0] in ("sessions", "report", "-h", "--help"):
+        return argv
+    return ["report", *argv]
+
+
+def main(argv=None):
+    parser = build_parser()
+    argv = _normalize_argv(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(argv)
+
+    if args.command == "sessions":
+        if args.session:
+            print(render_session_detail(args))
+        else:
+            print(render_sessions_list(args))
+        return
+
+    # command == "report"
     renderer = render_compact if (args.compact and not args.verbose) else render
 
     if args.watch is None:
