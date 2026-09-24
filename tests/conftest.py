@@ -21,6 +21,72 @@ _TOOL_ENV = (
     "TOKEN_FINOPS_ENERGY_JSON", "TOKEN_FINOPS_HARDWARE_JSON", "XDG_DATA_HOME", "APPDATA",
 )
 
+# User settings (core/config.py). Unlike the adapter roots above these are read on
+# *every* BudgetPolicy construction, so they must be neutralised for the whole suite,
+# not just for tests that take the `home` fixture -- otherwise a developer who has a
+# real ~/.token-finops/config.json would get different thresholds than CI.
+_CONFIG_ENV = (
+    "TOKEN_FINOPS_CONFIG", "TOKEN_FINOPS_WARN_AT", "TOKEN_FINOPS_CRITICAL_AT",
+    "TOKEN_FINOPS_DEFAULT_TOOL", "TOKEN_FINOPS_CYCLE_DAY", "TOKEN_FINOPS_BUDGET",
+    "TOKEN_FINOPS_ALLOWANCE", "TOKEN_FINOPS_WINDOW_HOURS",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path, monkeypatch):
+    """Point every test at a config file that does not exist, drop the settings env
+    vars, and clear the process-level CLI overrides / warn-once memory."""
+    from token_finops_cli.core import config
+
+    for var in _CONFIG_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("TOKEN_FINOPS_CONFIG", str(tmp_path / "no-such-config.json"))
+    config.reset()
+    yield
+    config.reset()
+
+
+class NetworkCallAttempted(BaseException):
+    """Raised by the `no_network` guard below. Deliberately *not* an `Exception`
+    so no production `except Exception:` can hide it (see `online.online_quota`)."""
+
+
+@pytest.fixture(autouse=True)
+def no_network(tmp_path, monkeypatch):
+    """Two guarantees for the whole suite, not just the `--online` tests (T-03).
+
+    1. `urllib.request.urlopen` raises. CI must never make a real request, so a
+       fetcher that slips past its stub fails loudly instead of quietly hitting
+       (and getting rate-limited by) a live endpoint. Tests that exercise the
+       online path re-patch it with their own stub.
+    2. The online response cache is redirected into `tmp_path`, so nothing can
+       write to a developer's real `~/.token-finops/` (AGENTS.md: never touch
+       `$HOME`), and no stale entry from a previous run leaks into a test.
+    """
+    import urllib.request
+
+    def _blocked(*args, **kwargs):
+        # BaseException on purpose: `online.online_quota()` swallows every
+        # `Exception` to fail closed, which would also swallow this guard and
+        # turn a real network call into a silent pass.
+        raise NetworkCallAttempted("the test suite must not make real network calls "
+                                   "-- stub urllib.request.urlopen in the test")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _blocked)
+    monkeypatch.setenv("TOKEN_FINOPS_ONLINE_CACHE", str(tmp_path / "online-cache.json"))
+
+
+@pytest.fixture
+def write_config(tmp_path, monkeypatch):
+    """Write a `~/.token-finops/config.json` for this test and point the CLI at it."""
+    def _write(data: dict) -> str:
+        path = tmp_path / "token-finops-config.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        monkeypatch.setenv("TOKEN_FINOPS_CONFIG", str(path))
+        return str(path)
+
+    return _write
+
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
@@ -39,6 +105,11 @@ def home(tmp_path, monkeypatch):
     # point it at a directory that does not exist.
     monkeypatch.setenv("TOKEN_FINOPS_AIDER_DIRS", str(h / "no-aider"))
     monkeypatch.setenv("TOKEN_FINOPS_CLINE_DIRS", str(h / "no-cline"))
+    # Inside a throwaway HOME the settings file can resolve the normal way again:
+    # `$HOME/.token-finops/config.json` is now a tmp path, so a test may write it
+    # there and exercise the real default location (the `isolated_config` fixture's
+    # TOKEN_FINOPS_CONFIG guard only exists for tests that have no fake HOME).
+    monkeypatch.delenv("TOKEN_FINOPS_CONFIG", raising=False)
 
     from token_finops_cli.adapters import claude_code
     from token_finops_cli.core import pricing

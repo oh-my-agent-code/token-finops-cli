@@ -37,6 +37,40 @@ $ token-finops adapters
   continue     no     ~/.continue
 ```
 
+Empty output? `doctor` says why, per tool, and what to do about it:
+
+```bash
+$ token-finops doctor
+token-finops doctor — what `report` can and cannot see on this machine
+
+  token-finops-cli 0.4.0
+  Python 3.12.7 (/usr/local/bin/python3)
+  platform Darwin 24.5.0
+
+  [found]   Claude Code (claude_code) — 13305 events, latest 2026-09-14 20:14 UTC
+      probed: ~/.claude/projects  (exists)
+      hint:   5h/7d quota percentages only exist in the status line: wire
+              `token-finops collect-statusline` as statusLine.command in ~/.claude/settings.json.
+
+  [empty]   OpenAI Codex CLI (codex)
+      probed: ~/.codex  (exists)
+      hint:   Codex CLI's home exists but has no rollout-*.jsonl sessions — run `codex` once.
+
+  [missing] Gemini CLI (gemini_cli)
+      probed: ~/.gemini  (not found)
+      hint:   No ~/.gemini. Install the Gemini CLI (`brew install gemini-cli` or
+              `npm install -g @google/gemini-cli`), or set GEMINI_CLI_HOME.
+  ...
+
+  summary: 1 with data, 1 installed but no usage yet, 7 not found
+```
+
+`found` = the adapter read usage events; `empty` = the tool's data location
+exists but holds no usage yet; `missing` = the coding agent itself does not
+look installed (or its data lives somewhere else — every entry names the
+environment variable that repoints it). `doctor` always exits 0: an empty
+machine is a normal state, not a failure. `--tool` narrows it to one adapter.
+
 ```bash
 $ token-finops report --compact
 GitHub Copilot CLI [######--------------]  29.4%  runway  41.2d  OK
@@ -96,7 +130,8 @@ real telemetry anywhere. See `docs/SYNTH.md` in the repo root for scenarios
 
 `token-finops-cli` still reads `~/.copilot/session-store.db`
 (`assistant_usage_events`) directly — no external API calls, nothing
-leaves your machine, the DB is opened read-only.
+leaves your machine, the DB is opened read-only. (The one exception is
+opt-in and never on by default: `--online`, below.)
 
 ```bash
 token-finops report --tool copilot                  # 7-day summary + runway (default window)
@@ -157,7 +192,7 @@ token-finops status --format waybar      # JSON; also polybar, i3, xbar, json
 
 `status` serves a cache (`~/.token-finops/last.json`) and rescans only with `--fresh` or when
 the cache is older than `--max-age` seconds. Refresh it from one timer (`contrib/refresh/`) and let
-every widget poll freely. Details: `../docs/TMUX.md`.
+every widget poll freely. Details: [`docs/TMUX.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/TMUX.md).
 
 ## Self-audit
 
@@ -213,6 +248,60 @@ fixture tree, or a non-default `$HOME`.
 | `CONTINUE_GLOBAL_DIR` | Continue.dev sessions root | `~/.continue` |
 | `TOKEN_FINOPS_HARDWARE_JSON` | Override the `savings` hardware-profiles JSON | packaged `hardware_profiles.json` |
 | `TOKEN_FINOPS_ENERGY_JSON` | Override the `savings` energy/tariff JSON | packaged `energy.json` |
+| `TOKEN_FINOPS_ONLINE_CACHE` | Where `--online` caches provider responses | `~/.token-finops/online-cache.json` |
+
+## Live quota: `--online` (opt-in)
+
+```bash
+token-finops report --online            # ask the provider instead of inferring locally
+token-finops status --online            # same, and implies a rescan
+```
+
+Off by default — without the flag nothing leaves your machine. With it, four providers are
+queried for their own current number: Copilot (`copilot_internal/user`), Claude Code
+(`api.anthropic.com/api/oauth/usage`), Gemini CLI (`retrieveUserQuota`) and OpenRouter
+(`/api/v1/key`, for Hermes). Credentials you already have — `gh auth token`/`$GITHUB_TOKEN`,
+`~/.claude/.credentials.json`, `~/.gemini/oauth_creds.json`, `$OPENROUTER_API_KEY` — are read
+to build one request header and are never written, refreshed or cached.
+
+It **fails closed**: no network, no credential, a 429, an endpoint that changed shape — all of
+it falls back silently to the normal offline report, with no error and no traceback. Responses
+and failures are cached for 180 s (`~/.token-finops/online-cache.json`), which is what keeps a
+polled status bar from getting rate-limited. Three of the four endpoints are
+reverse-engineered and unversioned: [`docs/sources.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/sources.md) has the table, the ADRs have the
+reasoning.
+
+## Settings
+
+The variables above say *where the data is*. A second, smaller set says *how you want it
+judged* — budget thresholds, the monthly cycle day, per-tool allowances, and a default
+tool so you need not type `--tool claude_code` every time. Each has a `config.json` twin
+in `~/.token-finops/config.json`, and one precedence rule applies to all of them:
+
+```
+explicit CLI flag  >  TOKEN_FINOPS_* env var  >  config.json  >  hardcoded default
+```
+
+| Variable | `config.json` key | Default |
+|---|---|---|
+| `TOKEN_FINOPS_WARN_AT` | `budget.warn_at` | `0.75` |
+| `TOKEN_FINOPS_CRITICAL_AT` | `budget.critical_at` | `0.90` |
+| `TOKEN_FINOPS_CYCLE_DAY` | `budget.cycle_day` | `1` |
+| `TOKEN_FINOPS_BUDGET` | `budget.allowance.copilot` | per adapter |
+| `TOKEN_FINOPS_ALLOWANCE` | `budget.allowance.<tool>` | per adapter |
+| `TOKEN_FINOPS_WINDOW_HOURS` | `budget.window_hours` | per adapter |
+| `TOKEN_FINOPS_DEFAULT_TOOL` | `default_tool` | none (all detected tools) |
+| `TOKEN_FINOPS_CONFIG` | — | `~/.token-finops/config.json` |
+
+```bash
+TOKEN_FINOPS_WARN_AT=0.5 token-finops report   # try a stricter threshold for one run
+token-finops doctor                            # print the settings actually in effect
+```
+
+Invalid values are reported once on stderr and fall back to the default rather than
+aborting the run. Full schema, precedence details, and the rule that provider-reported
+data (a real `resets_at`, a real `used%`) is never overridden by configuration:
+[`docs/CONFIG.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/CONFIG.md).
 
 ## Documentation and design rules
 
@@ -221,15 +310,15 @@ full guide, the read-only/fractions-not-dollars design rules, the
 per-assistant Architecture Decision Records, and the 50 executable use
 cases, see the repository root:
 
-- [`../README.md`](../README.md) — project overview, design rules, related tools
-- [`../docs/PLAN.md`](../docs/PLAN.md) — structured plan and status
-- [`../docs/ADAPTERS.md`](../docs/ADAPTERS.md) — how to add an adapter
-- [`../docs/adr/`](../docs/adr/) — one ADR per coding assistant
-- [`../docs/SYNTH.md`](../docs/SYNTH.md) — synthetic telemetry generator
-- [`../docs/USECASES.md`](../docs/USECASES.md) — every executable use case
-- [`../docs/TMUX.md`](../docs/TMUX.md) — `status --format …` for tmux, starship, waybar, polybar, i3, SwiftBar
-- [`../docs/INTEGRATIONS.md`](../docs/INTEGRATIONS.md) — editor / agent-native / desktop integrations (design doc)
-- [`../CHANGELOG.md`](../CHANGELOG.md), [`../CONTRIBUTING.md`](../CONTRIBUTING.md)
+- [`README.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/README.md) — project overview, design rules, related tools
+- [`docs/PLAN.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/PLAN.md) — structured plan and status
+- [`docs/ADAPTERS.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/ADAPTERS.md) — how to add an adapter
+- [`docs/adr/`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/adr/) — one ADR per coding assistant
+- [`docs/SYNTH.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/SYNTH.md) — synthetic telemetry generator
+- [`docs/USECASES.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/USECASES.md) — every executable use case
+- [`docs/TMUX.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/TMUX.md) — `status --format …` for tmux, starship, waybar, polybar, i3, SwiftBar
+- [`docs/INTEGRATIONS.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/INTEGRATIONS.md) — editor / agent-native / desktop integrations (design doc)
+- [`CHANGELOG.md`](CHANGELOG.md) — this repo's own release notes
 
 ## License
 
