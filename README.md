@@ -43,7 +43,7 @@ Empty output? `doctor` says why, per tool, and what to do about it:
 $ token-finops doctor
 token-finops doctor — what `report` can and cannot see on this machine
 
-  token-finops-cli 0.3.0
+  token-finops-cli 0.4.0
   Python 3.12.7 (/usr/local/bin/python3)
   platform Darwin 24.5.0
 
@@ -192,7 +192,7 @@ token-finops status --format waybar      # JSON; also polybar, i3, xbar, json
 
 `status` serves a cache (`~/.token-finops/last.json`) and rescans only with `--fresh` or when
 the cache is older than `--max-age` seconds. Refresh it from one timer (`contrib/refresh/`) and let
-every widget poll freely. Details: `../docs/TMUX.md`.
+every widget poll freely. Details: [`docs/TMUX.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/TMUX.md).
 
 ## Self-audit
 
@@ -268,7 +268,7 @@ It **fails closed**: no network, no credential, a 429, an endpoint that changed 
 it falls back silently to the normal offline report, with no error and no traceback. Responses
 and failures are cached for 180 s (`~/.token-finops/online-cache.json`), which is what keeps a
 polled status bar from getting rate-limited. Three of the four endpoints are
-reverse-engineered and unversioned: `../docs/sources.md` has the table, the ADRs have the
+reverse-engineered and unversioned: [`docs/sources.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/sources.md) has the table, the ADRs have the
 reasoning.
 
 ## Settings
@@ -301,7 +301,7 @@ token-finops doctor                            # print the settings actually in 
 Invalid values are reported once on stderr and fall back to the default rather than
 aborting the run. Full schema, precedence details, and the rule that provider-reported
 data (a real `resets_at`, a real `used%`) is never overridden by configuration:
-[`../docs/CONFIG.md`](../docs/CONFIG.md).
+[`docs/CONFIG.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/CONFIG.md).
 
 ## Documentation and design rules
 
@@ -310,15 +310,15 @@ full guide, the read-only/fractions-not-dollars design rules, the
 per-assistant Architecture Decision Records, and the 50 executable use
 cases, see the repository root:
 
-- [`../README.md`](../README.md) — project overview, design rules, related tools
-- [`../docs/PLAN.md`](../docs/PLAN.md) — structured plan and status
-- [`../docs/ADAPTERS.md`](../docs/ADAPTERS.md) — how to add an adapter
-- [`../docs/adr/`](../docs/adr/) — one ADR per coding assistant
-- [`../docs/SYNTH.md`](../docs/SYNTH.md) — synthetic telemetry generator
-- [`../docs/USECASES.md`](../docs/USECASES.md) — every executable use case
-- [`../docs/TMUX.md`](../docs/TMUX.md) — `status --format …` for tmux, starship, waybar, polybar, i3, SwiftBar
-- [`../docs/INTEGRATIONS.md`](../docs/INTEGRATIONS.md) — editor / agent-native / desktop integrations (design doc)
-- [`../CHANGELOG.md`](../CHANGELOG.md), [`../CONTRIBUTING.md`](../CONTRIBUTING.md)
+- [`README.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/README.md) — project overview, design rules, related tools
+- [`docs/PLAN.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/PLAN.md) — structured plan and status
+- [`docs/ADAPTERS.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/ADAPTERS.md) — how to add an adapter
+- [`docs/adr/`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/adr/) — one ADR per coding assistant
+- [`docs/SYNTH.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/SYNTH.md) — synthetic telemetry generator
+- [`docs/USECASES.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/USECASES.md) — every executable use case
+- [`docs/TMUX.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/TMUX.md) — `status --format …` for tmux, starship, waybar, polybar, i3, SwiftBar
+- [`docs/INTEGRATIONS.md`](https://github.com/qvest-ssels/burn-token-burn/blob/main/docs/INTEGRATIONS.md) — editor / agent-native / desktop integrations (design doc)
+- [`CHANGELOG.md`](CHANGELOG.md) — this repo's own release notes
 
 ## License
 

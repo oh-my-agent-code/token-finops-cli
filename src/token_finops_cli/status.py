@@ -233,16 +233,23 @@ def add_status_parser(sub, parents=None):
 
 def cmd_status(args) -> str:
     path = args.cache_file or CACHE_FILE
-    # `--online` only means something on a rescan: the cached `last.json` was built
-    # from whatever quota source the *previous* run used. It therefore implies
-    # `--fresh` -- the 180 s online-response cache (online.py) is what keeps a
-    # polled status bar from hammering a rate-limited endpoint, not this file.
-    snap = None if (args.fresh or getattr(args, "online", False)) else read_cache(path)
+    want_online = bool(getattr(args, "online", False))
+    # A cache built from a plain (offline) rescan can't answer an `--online` call --
+    # its `binding`/`tools` reflect whatever quota source that earlier run used, not
+    # a live one. But a cache that *was itself* built with `--online` is just as
+    # valid for a later `--online` call as for a plain one: the 180 s online-response
+    # cache (online.py) already protects the provider endpoint, so re-reading this
+    # file within --max-age avoids a full local-telemetry rescan on every poll of a
+    # tmux/waybar widget that always passes --online.
+    snap = None if args.fresh else read_cache(path)
+    if snap is not None and want_online and not snap.get("online"):
+        snap = None
     if snap is not None and args.max_age and (stale_seconds(snap) or 0) > args.max_age:
         snap = None
     if snap is None:
         from .cli import collect_report_payload
         snap = build_snapshot(collect_report_payload(args))
+        snap["online"] = want_online
         try:
             write_cache(snap, path)
         except OSError:

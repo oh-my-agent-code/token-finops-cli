@@ -408,15 +408,32 @@ def test_explicit_tool_flag_always_beats_the_configured_default(copilot_db, home
 
 def test_default_tool_applies_to_every_subcommand_that_takes_tool(home, monkeypatch):
     """Not just `report`: whatever subcommand exposes `--tool` gets the same default,
-    which is the whole point of resolving it once in `main()`."""
+    which is the whole point of resolving it once in `main()`. `doctor` is the one
+    exception -- its whole purpose is diagnosing every adapter at once, so the
+    configured default must not narrow it (see the dedicated test below)."""
     all_adapters()
     monkeypatch.setenv("TOKEN_FINOPS_DEFAULT_TOOL", "codex")
     parser = cli.build_parser()
-    for argv in (["report"], ["sessions"], ["doctor"], ["status"], ["burn"],
+    for argv in (["report"], ["sessions"], ["status"], ["burn"],
                  ["cost-per-token"], ["break-even"]):
         args = parser.parse_args(argv)
         cli.apply_config_defaults(args)
         assert args.tool == ["codex"], argv
+
+
+def test_default_tool_does_not_narrow_doctor(home, monkeypatch):
+    """`doctor --tool` is still honoured when the user passes it explicitly; only the
+    *configured* default is exempted, since applying it here would silently hide
+    every other tool's diagnosis instead of a user explicitly asking for one."""
+    all_adapters()
+    monkeypatch.setenv("TOKEN_FINOPS_DEFAULT_TOOL", "codex")
+    parser = cli.build_parser()
+    args = parser.parse_args(["doctor"])
+    cli.apply_config_defaults(args)
+    assert args.tool is None
+    args = parser.parse_args(["doctor", "--tool", "codex"])
+    cli.apply_config_defaults(args)
+    assert args.tool == ["codex"]
 
 
 def test_an_unknown_configured_default_tool_still_reports_everything(copilot_db, run_cli, write_config):

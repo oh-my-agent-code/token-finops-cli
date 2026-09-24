@@ -68,7 +68,7 @@ CACHE_ENV = "TOKEN_FINOPS_ONLINE_CACHE"
 DEFAULT_CACHE_PATH = "~/.token-finops/online-cache.json"
 CACHE_TTL_SECONDS = 180.0          # T-03 floor; the endpoints are rate-limited
 HTTP_TIMEOUT_SECONDS = 6.0
-USER_AGENT = "token-finops (+https://github.com/tronicum/burn-token-burn)"
+USER_AGENT = "token-finops (+https://github.com/oh-my-agent-code/token-finops-cli)"
 
 COPILOT_URL = "https://api.github.com/copilot_internal/user"
 ANTHROPIC_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -124,7 +124,8 @@ def cache_put(key: str, payload: Optional[dict], now: Optional[float] = None) ->
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
         os.replace(tmp, path)
     except (OSError, TypeError, ValueError):
@@ -235,6 +236,30 @@ def gemini_token() -> Optional[str]:
     return _deep_find(data, ("access_token", "accessToken"))
 
 
+def _find_under_openrouter_key(data: Any, depth: int = 6) -> Optional[str]:
+    """Like `_deep_find`, but the generic `api_key`/`apiKey` aliases are only
+    trusted inside a sub-object reached via a key containing "openrouter" —
+    Hermes is bring-your-own-provider, so a flat `_deep_find` over generic
+    aliases can match a *different* provider's key (e.g. `{"providers":
+    {"openai": {"api_key": "sk-..."}, "openrouter": {}}}`) and leak it to
+    openrouter.ai. The provider-specific aliases stay depth-unrestricted."""
+    found = _deep_find(data, ("openrouter_api_key", "openrouterApiKey"), depth)
+    if found:
+        return found
+    if depth < 0 or not isinstance(data, dict):
+        return None
+    for key, val in data.items():
+        if "openrouter" in key.lower() and isinstance(val, dict):
+            scoped = _deep_find(val, ("api_key", "apiKey"), depth - 1)
+            if scoped:
+                return scoped
+    for val in data.values():
+        found = _find_under_openrouter_key(val, depth - 1)
+        if found:
+            return found
+    return None
+
+
 def openrouter_key() -> Optional[str]:
     """`$OPENROUTER_API_KEY` (or `$OPENROUTER_KEY`), else Hermes's own config.
 
@@ -247,8 +272,9 @@ def openrouter_key() -> Optional[str]:
             return val.strip()
     root = os.environ.get("HERMES_HOME") or "~/.hermes"
     for name in ("config.json", "settings.json"):
-        key = _deep_find(_read_json_file(os.path.join(os.path.expanduser(root), name)),
-                         ("openrouter_api_key", "openrouterApiKey", "api_key", "apiKey"))
+        key = _find_under_openrouter_key(
+            _read_json_file(os.path.join(os.path.expanduser(root), name))
+        )
         if key:
             return key
     return None
@@ -331,9 +357,13 @@ def parse_copilot(data: dict) -> Optional[QuotaSnapshot]:
 def parse_anthropic(data: dict, window: str = "five_hour") -> Optional[QuotaSnapshot]:
     """`five_hour`/`seven_day` utilisation from the RE `oauth/usage` endpoint.
 
-    The response shape is undocumented and has already been observed both as
-    a percentage (0-100) and as a 0-1 fraction, so a value <= 1 is read as a
-    fraction and anything larger as a percentage."""
+    The response shape is undocumented and has already been observed under
+    several field names. Rather than guess fraction-vs-percentage from the
+    *value* (a genuine `utilization: 1` meaning 1% would otherwise be
+    misread as 100%), the convention is picked by *field name*: a
+    `*percentage*`/`percent_used` field is always 0-100, `used_fraction` is
+    always 0-1, and only the genuinely ambiguous bare `utilization` field
+    falls back to the <= 1 heuristic."""
     if not isinstance(data, dict):
         return None
     aliases = {"five_hour": ("five_hour", "fiveHour", "5h"),
@@ -344,11 +374,18 @@ def parse_anthropic(data: dict, window: str = "five_hour") -> Optional[QuotaSnap
         block = _pick(nested, *aliases) if isinstance(nested, dict) else None
     if not isinstance(block, dict):
         return None
-    raw = _as_float(_pick(block, "utilization", "used_percentage", "usedPercentage",
-                          "used_fraction", "percent_used"))
-    if raw is None:
-        return None
-    used_fraction = raw if raw <= 1.0 else raw / 100.0
+    percent = _as_float(_pick(block, "used_percentage", "usedPercentage", "percent_used"))
+    if percent is not None:
+        used_fraction = percent / 100.0
+    else:
+        fraction = _as_float(_pick(block, "used_fraction"))
+        if fraction is not None:
+            used_fraction = fraction
+        else:
+            raw = _as_float(_pick(block, "utilization"))
+            if raw is None:
+                return None
+            used_fraction = raw if raw <= 1.0 else raw / 100.0
     return QuotaSnapshot(
         tool="claude_code", window_id="5h" if window == "five_hour" else "7d",
         observed_at=_now(), used_fraction=max(0.0, min(1.0, used_fraction)),

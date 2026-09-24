@@ -212,7 +212,9 @@ def add_savings_parsers(sub):
                         "not a sourced figure, always shown on its own line")
     s.add_argument("--co2", action="store_true",
                    help="green-IT block: local gCO2/1M tok (measured tariff) vs an ESTIMATED cloud figure")
+    cloud_blk = energy().get("cloud_inference_co2_estimate") or {}
     s.add_argument("--cloud-region", default=None,
+                   choices=sorted(cloud_blk["regions"]) if cloud_blk.get("regions") else None,
                    help="grid region for the cloud CO2 estimate (see --list); default from energy.json")
     s.add_argument("--list", action="store_true", help="list hardware/model/tariff keys")
 

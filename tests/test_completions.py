@@ -12,6 +12,10 @@ may legitimately run ahead of `main` (a subcommand landing in a concurrent PR), 
 offering one extra completion candidate is harmless; a *missing* one is the drift we
 care about. Same containment style as test_cli_smoke_workflow.py -- no shell parser,
 just the lines each shell keys off.
+
+Skipped when `contrib/` is absent -- the package ships as a subtree and can be checked
+out standalone without the monorepo's `contrib/`/`docs/` directories (see
+test_contrib_skills.py for the same guard).
 """
 from __future__ import annotations
 
@@ -29,6 +33,10 @@ COMPLETIONS_DIR = os.path.join(_ROOT, "contrib", "completions")
 BASH = os.path.join(COMPLETIONS_DIR, "token-finops.bash")
 ZSH = os.path.join(COMPLETIONS_DIR, "token-finops.zsh")
 FISH = os.path.join(COMPLETIONS_DIR, "token-finops.fish")
+
+pytestmark = pytest.mark.skipif(
+    not os.path.isdir(COMPLETIONS_DIR), reason="contrib/ not present in this checkout"
+)
 
 
 def _read(path: str) -> str:

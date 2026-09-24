@@ -74,7 +74,7 @@ _HINTS = {
                  "`token-finops report --tool gemini_cli --allowance N`.",
     },
     "hermes": {
-        "missing": "No ~/.hermes/state.db. Install Hermes Agent (see docs/INSTALL.md) or set HERMES_HOME.",
+        "missing": "No ~/.hermes/state.db. Install Hermes Agent, or set HERMES_HOME if it's elsewhere.",
         "empty": "Hermes' state.db exists but has no session usage rows yet — run one Hermes session.",
         "found": "Hermes records per-model billing mode; local-model events carry no USD by design.",
     },

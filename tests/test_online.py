@@ -111,6 +111,15 @@ def test_anthropic_accepts_a_0_to_1_fraction_as_well_as_a_percentage():
         .used_fraction == pytest.approx(0.4)
 
 
+def test_anthropic_named_percentage_field_is_never_misread_as_a_fraction():
+    """A genuine `used_percentage: 1` (1%) must not become 100% used just
+    because the value is <= 1 -- that heuristic is only for the ambiguous
+    bare `utilization` field, not a field whose name already says percentage
+    or fraction."""
+    assert online.parse_anthropic({"five_hour": {"used_percentage": 1}}).used_fraction == pytest.approx(0.01)
+    assert online.parse_anthropic({"five_hour": {"used_fraction": 1}}).used_fraction == pytest.approx(1.0)
+
+
 def test_gemini_posts_and_takes_the_emptiest_bucket(monkeypatch, creds):
     calls = stub_urlopen(monkeypatch, GEMINI_BODY, [])
     snap = online.fetch_gemini_online()
@@ -246,6 +255,17 @@ def test_the_cache_never_stores_a_credential(monkeypatch, creds):
     assert "gh-token" not in raw and "sk-ant-oauth" not in raw
 
 
+def test_the_cache_file_is_not_group_or_world_readable(monkeypatch, creds):
+    """It holds plan/reset/usage data straight from a provider's quota API."""
+    import os
+    import stat
+
+    stub_urlopen(monkeypatch, COPILOT_BODY)
+    online.fetch_copilot_online()
+    mode = stat.S_IMODE(os.stat(online.cache_path()).st_mode)
+    assert mode == 0o600, oct(mode)
+
+
 def test_cache_entries_are_per_tool(monkeypatch, creds):
     stub_urlopen(monkeypatch, COPILOT_BODY)
     online.fetch_copilot_online()
@@ -324,6 +344,23 @@ def test_openrouter_key_can_come_from_hermes_config(monkeypatch, tmp_path):
                                         encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes))
     assert online.openrouter_key() == "or-cfg"
+
+
+def test_openrouter_key_never_picks_up_a_different_providers_generic_api_key(monkeypatch, tmp_path):
+    """`api_key`/`apiKey` are common generic aliases; matching them anywhere in a
+    bring-your-own-provider config would leak an unrelated provider's key to
+    openrouter.ai. Only a key found *inside* an "openrouter"-named sub-object
+    may use the generic alias."""
+    for var in ("OPENROUTER_API_KEY", "OPENROUTER_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    hermes = tmp_path / "hermes"
+    hermes.mkdir()
+    (hermes / "config.json").write_text(
+        json.dumps({"providers": {"openai": {"api_key": "sk-OPENAI-SECRET"}, "openrouter": {}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(hermes))
+    assert online.openrouter_key() is None
 
 
 # --------------------------------------------------------------------------- #
@@ -435,3 +472,26 @@ def test_status_online_implies_a_rescan(tmp_path, monkeypatch, home):
     calls.clear()
     st.cmd_status(args)
     assert not calls, "without --online the cache is still used"
+
+
+def test_status_online_reuses_a_cache_that_was_itself_built_online(tmp_path, monkeypatch, home):
+    """A repeated `status --online` (e.g. a tmux/waybar widget polling every few
+    seconds) must not force a full local-telemetry rescan on every call just
+    because `--online` was passed -- only the first call, or once the cache goes
+    stale past --max-age, should rescan. The 180 s online-response cache in
+    online.py already protects the provider endpoint."""
+    import argparse
+
+    from token_finops_cli import status as st
+
+    cache = tmp_path / "last.json"
+    calls = []
+    monkeypatch.setattr("token_finops_cli.cli.collect_report_payload",
+                        lambda args: calls.append(args) or [])
+    args = argparse.Namespace(cache_file=str(cache), fresh=False, max_age=300, format="plain",
+                              tool=None, all=False, online=True, budget=None, allowance=None,
+                              cycle_day=None, db_path=None)
+    st.cmd_status(args)
+    assert len(calls) == 1, "first --online call with no cache yet must rescan"
+    st.cmd_status(args)
+    assert len(calls) == 1, "a second --online call must reuse the cache the first one wrote"

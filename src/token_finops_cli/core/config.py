@@ -43,6 +43,7 @@ import json
 import os
 import sys
 from datetime import timedelta
+from functools import lru_cache
 from typing import Any, Iterable, Optional
 
 # --------------------------------------------------------------------------- #
@@ -89,9 +90,11 @@ def set_cli_overrides(*, copilot_allowance: Optional[float] = None, allowance: O
 
 
 def reset() -> None:
-    """Drop CLI overrides and the warn-once memory (used by the test suite)."""
+    """Drop CLI overrides, the warn-once memory, and the cached config file contents
+    (used by the test suite, and by anything that rewrites the config file mid-process)."""
     _cli.clear()
     _warned.clear()
+    _load_config_cached.cache_clear()
 
 
 def _warn(msg: str) -> None:
@@ -110,16 +113,31 @@ def config_path() -> str:
     return os.path.expanduser(os.environ.get(CONFIG_PATH_ENV) or DEFAULT_CONFIG_PATH)
 
 
-def load_config() -> dict:
-    """The parsed config file, or `{}`. Never raises: a missing, unreadable, corrupt
-    or non-object file is treated as "no settings", exactly like the original
-    `cli._statusline_config()` this generalises."""
+@lru_cache(maxsize=8)
+def _load_config_cached(path: str, _mtime_ns: int, _size: int) -> dict:
     try:
-        with open(config_path(), encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def load_config() -> dict:
+    """The parsed config file, or `{}`. Never raises: a missing, unreadable, corrupt
+    or non-object file is treated as "no settings", exactly like the original
+    `cli._statusline_config()` this generalises.
+
+    Cached per (path, mtime, size) -- `report` builds one `BudgetPolicy` per adapter,
+    each re-reading and re-parsing the same unchanged file otherwise -- but a `stat()`
+    is cheap enough to call every time so an edit to the file (including one made by
+    this same process, e.g. in tests) is always picked up without needing `reset()`."""
+    path = config_path()
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {}
+    return _load_config_cached(path, st.st_mtime_ns, st.st_size)
 
 
 def section(name: str) -> dict:

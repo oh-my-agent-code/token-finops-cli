@@ -469,11 +469,17 @@ def apply_config_defaults(args) -> None:
     An explicit `--tool` always wins: argparse leaves it at None when the user passed
     none, which is exactly the case where a configured default may step in. A
     configured tool no adapter answers to is ignored with a warning (see
-    `config.default_tool`) rather than yielding a silently empty report."""
+    `config.default_tool`) rather than yielding a silently empty report.
+
+    `doctor` is exempt: its whole purpose is diagnosing every adapter at once,
+    so narrowing it to the configured default tool would silently hide the
+    other tools' diagnosis instead of a user explicitly asking for one via
+    `doctor --tool X`."""
     config.set_cli_overrides(copilot_allowance=getattr(args, "budget", None),
                              allowance=getattr(args, "allowance", None),
                              cycle_day=getattr(args, "cycle_day", None))
-    if hasattr(args, "tool") and not getattr(args, "tool", None):
+    if (getattr(args, "command", None) != "doctor"
+            and hasattr(args, "tool") and not getattr(args, "tool", None)):
         tool = config.default_tool(valid=registry)
         if tool:
             args.tool = [tool]
@@ -561,7 +567,7 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(_normalize_argv(sys.argv[1:] if argv is None else argv))
     apply_config_defaults(args)
-    handlers ={"report": cmd_report, "sessions": cmd_sessions, "self-audit": cmd_self_audit,
+    handlers = {"report": cmd_report, "sessions": cmd_sessions, "self-audit": cmd_self_audit,
                 "collect-statusline": cmd_collect_statusline, "adapters": cmd_adapters,
                 "synth": cmd_synth}
     if args.command == "burn":
