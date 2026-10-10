@@ -73,3 +73,22 @@ def test_missing_roots_not_available(tmp_path, monkeypatch):
     adapter = AiderAdapter()
     assert not adapter.available()
     assert list(adapter.scan()) == []
+
+
+def test_existing_empty_root_not_available(tmp_path, monkeypatch):
+    """A search root that exists but has no history/analytics file must not
+    be reported as available -- regression test for the false-positive
+    where `available()` only checked that the root directory existed (and
+    `~` always exists)."""
+    empty_root = tmp_path / "aider_home_empty"
+    empty_root.mkdir()
+    monkeypatch.setenv("TOKEN_FINOPS_AIDER_DIRS", str(empty_root))
+    monkeypatch.setenv("TOKEN_FINOPS_AIDER_ANALYTICS", str(empty_root / ".aider" / "analytics.jsonl"))
+    adapter = AiderAdapter()
+    assert not adapter.available()
+    assert list(adapter.scan()) == []
+
+
+def test_history_file_present_is_available(tmp_path, monkeypatch):
+    adapter, _ = _make_adapter(tmp_path, monkeypatch)
+    assert adapter.available()

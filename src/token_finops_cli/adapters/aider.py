@@ -250,9 +250,11 @@ class AiderAdapter(BaseAdapter):
         return _search_roots()[0]
 
     def available(self) -> bool:
-        if any(os.path.isdir(os.path.expanduser(r)) for r in _search_roots()):
+        if os.path.exists(self._analytics_path()):
             return True
-        return os.path.exists(self._analytics_path())
+        # `_iter_history_paths` is a generator backed by `os.walk`, so this
+        # stops at the first match instead of walking the whole tree.
+        return next(_iter_history_paths(_search_roots()), None) is not None
 
     def _analytics_path(self) -> str:
         return os.path.expanduser(
