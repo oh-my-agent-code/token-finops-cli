@@ -214,8 +214,9 @@ def render(snapshot: dict, fmt: str, tool_filter: Optional[list[str]] = None, sh
 # --------------------------------------------------------------------------- #
 # CLI glue
 # --------------------------------------------------------------------------- #
-def add_status_parser(sub):
-    s = sub.add_parser("status", help="one-line status for tmux/starship/waybar/… (cached; --fresh to rescan)")
+def add_status_parser(sub, parents=None):
+    s = sub.add_parser("status", parents=parents or [],
+                       help="one-line status for tmux/starship/waybar/… (cached; --fresh to rescan)")
     s.add_argument("--format", "-f", choices=sorted(RENDERERS), default="plain")
     s.add_argument("--tool", action="append", default=None, help="restrict to tool(s)")
     s.add_argument("--all", action="store_true", help="include UNLIMITED (usage-only, no allowance) tools")
@@ -223,19 +224,32 @@ def add_status_parser(sub):
     s.add_argument("--max-age", type=int, default=300, metavar="SECONDS",
                    help="rescan if the cache is older than this (default 300; 0 = always)")
     s.add_argument("--cache-file", default=None, help="override ~/.token-finops/last.json")
-    s.add_argument("--budget", type=float, default=None, help="Copilot allowance for a fresh scan")
-    s.add_argument("--cycle-day", type=int, default=1)
-    s.add_argument("--allowance", type=float, default=None)
+    s.add_argument("--online", action="store_true",
+                   help="opt-in: ask the provider for the live quota (implies a rescan; the response "
+                        "itself is cached 180s in ~/.token-finops/online-cache.json). Falls back to "
+                        "the offline path on any error")
+    # --budget / --allowance / --cycle-day come from cli.budget_override_parser()
 
 
 def cmd_status(args) -> str:
     path = args.cache_file or CACHE_FILE
+    want_online = bool(getattr(args, "online", False))
+    # A cache built from a plain (offline) rescan can't answer an `--online` call --
+    # its `binding`/`tools` reflect whatever quota source that earlier run used, not
+    # a live one. But a cache that *was itself* built with `--online` is just as
+    # valid for a later `--online` call as for a plain one: the 180 s online-response
+    # cache (online.py) already protects the provider endpoint, so re-reading this
+    # file within --max-age avoids a full local-telemetry rescan on every poll of a
+    # tmux/waybar widget that always passes --online.
     snap = None if args.fresh else read_cache(path)
+    if snap is not None and want_online and not snap.get("online"):
+        snap = None
     if snap is not None and args.max_age and (stale_seconds(snap) or 0) > args.max_age:
         snap = None
     if snap is None:
         from .cli import collect_report_payload
         snap = build_snapshot(collect_report_payload(args))
+        snap["online"] = want_online
         try:
             write_cache(snap, path)
         except OSError:
