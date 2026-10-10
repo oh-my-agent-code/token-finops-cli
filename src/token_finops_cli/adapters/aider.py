@@ -290,20 +290,24 @@ def build_synthetic_aider(root_dir: str, scenario: str = "steady",
     `root_dir`.
 
     `scenario` shifts the two chat-block timestamps to "yesterday" and
-    "today" (relative to `now`) instead of a fixed 2026-09 date, and (for
-    "quiet") widens the gap between them; it does not change the token/cost
-    figures. "steady" (the default) reproduces the exact pre-scenario output.
+    "today" (relative to `now`, defaulting to the real current time) rather
+    than a fixed calendar date, and (for "quiet") widens the gap between
+    them; it does not change the token/cost figures. "steady" (the default)
+    reproduces the exact pre-scenario token/cost numbers, just anchored to
+    `now` instead of a hardcoded Sept 2026 date, so it stays inside the
+    default report window regardless of when the test runs.
 
     Returns the total number of usage events represented across both
     sources.
     """
     os.makedirs(root_dir, exist_ok=True)
     history_path = os.path.join(root_dir, _HISTORY_NAME)
+    base = now or datetime.now(timezone.utc)
     if scenario == "steady":
-        ts_a, ts_b = "2026-09-01 10:00:00", "2026-09-02 11:30:00"
-        analytics_time = datetime.now(timezone.utc).timestamp()
+        ts_a = (base - timedelta(days=1, hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+        ts_b = (base - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+        analytics_time = base.timestamp()
     else:
-        base = now or datetime.now(timezone.utc)
         gap_days = 7 if scenario == "quiet" else 1
         ts_a = (base - timedelta(days=gap_days, hours=1)).strftime("%Y-%m-%d %H:%M:%S")
         ts_b = (base - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
