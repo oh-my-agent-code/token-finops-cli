@@ -63,6 +63,8 @@ def _report_rows(args):
     if getattr(args, "db_path", None):
         os.environ["TOKEN_FINOPS_COPILOT_DB"] = args.db_path
         args.tool = ["copilot"]
+    budget = getattr(args, "budget", None)
+    warned_tools: set[str] = set()
     rows = []
     for ad in _adapters(getattr(args, "tool", None)):
         if not ad.available():
@@ -73,6 +75,13 @@ def _report_rows(args):
         if ad.tool == "copilot":
             policy = ad.default_policy(config.allowance("copilot"), cycle_day=config.cycle_day())
         else:
+            # --budget is a dollar/AI-unit allowance; only Copilot's policy consumes it.
+            # Every other tool here uses a 0-1 fraction via --allowance, so a bare
+            # --budget would otherwise be silently dropped on the floor.
+            if budget is not None and ad.tool not in warned_tools:
+                print(f"note: --budget only applies to Copilot; ignored for {ad.tool} "
+                      f"(use --allowance for a 0-1 fraction instead)", file=sys.stderr)
+                warned_tools.add(ad.tool)
             policy = ad.default_policy(config.allowance(ad.tool))
         events = ad.events(since=None)
         quota = ad.quota()
@@ -454,7 +463,8 @@ def budget_override_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(add_help=False)
     g = p.add_argument_group("budget overrides (CLI > $TOKEN_FINOPS_* > config.json > default)")
     g.add_argument("--budget", type=float, default=None,
-                   help="Copilot monthly AI-unit allowance ($TOKEN_FINOPS_BUDGET, budget.allowance)")
+                   help="Copilot-only monthly AI-unit allowance ($TOKEN_FINOPS_BUDGET, budget.allowance); "
+                        "ignored for other tools, use --allowance there instead")
     g.add_argument("--allowance", type=float, default=None,
                    help="allowance for non-Copilot tools, native unit ($TOKEN_FINOPS_ALLOWANCE)")
     g.add_argument("--cycle-day", type=int, default=None,

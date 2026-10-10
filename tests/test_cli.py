@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 
+from token_finops_cli.synth import generate
+
 # run the CLI from the checkout even when pytest's interpreter lacks the installed package
 _SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 _ENV = {**os.environ, "PYTHONPATH": _SRC + os.pathsep + os.environ.get("PYTHONPATH", "")}
@@ -58,6 +60,51 @@ def test_sessions_help_runs():
     assert result.returncode == 0
     assert "--gap-minutes" in result.stdout
     assert "--limit" in result.stdout
+
+
+def test_budget_help_notes_copilot_only():
+    """--help text must make clear --budget is Copilot-specific (issue: it was
+    silently ignored for every other tool, with no hint in --help either)."""
+    result = subprocess.run(
+        [sys.executable, "-m", "token_finops_cli.cli", "report", "--help"],
+        capture_output=True, text=True, check=False, env=_ENV,
+    )
+    assert result.returncode == 0
+    # the usage summary at the top also says "--budget", so find the *second*
+    # occurrence: the option's own description in the args list below it.
+    idx = result.stdout.index("--budget", result.stdout.index("--budget") + 1)
+    assert "Copilot" in result.stdout[idx:idx + 200]
+
+
+def test_budget_warns_on_stderr_for_non_copilot_tool(home, capsys):
+    """Core fix: `--budget` only feeds Copilot's policy. Passing it with any other
+    tool used to be silently swallowed; it must now warn on stderr and not crash.
+
+    Note: calls `main()` directly rather than via the `run_cli` fixture, since
+    that fixture already drains capsys (stdout *and* stderr) before we could
+    inspect stderr ourselves."""
+    from token_finops_cli.cli import main
+
+    generate(str(home), tools=["gemini_cli"], days=3, seed=1)
+    main(["report", "--tool", "gemini_cli", "--budget", "20", "--json"])
+    captured = capsys.readouterr()
+    assert "note:" in captured.err and "--budget" in captured.err and "gemini_cli" in captured.err
+    assert "Copilot" in captured.err
+    # the report itself still renders fine (ignoring --budget, not crashing)
+    assert captured.out.strip().startswith("[")
+
+
+def test_budget_no_warning_for_copilot(home, capsys, monkeypatch, tmp_path):
+    """Sanity check: Copilot itself must never trigger the new warning."""
+    from token_finops_cli.adapters.copilot import build_synthetic_db
+    from token_finops_cli.cli import main
+
+    db = tmp_path / "s.db"
+    build_synthetic_db(str(db), days=3, events_per_day=2)
+    monkeypatch.setenv("TOKEN_FINOPS_COPILOT_DB", str(db))
+    main(["report", "--tool", "copilot", "--budget", "1500"])
+    captured = capsys.readouterr()
+    assert "note:" not in captured.err
 
 
 def test_sessions_list_against_synthetic_db(tmp_path):
