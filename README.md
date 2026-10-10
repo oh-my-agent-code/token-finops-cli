@@ -133,6 +133,29 @@ window are enough for a burn estimate:
 { "statusLine": { "type": "command", "command": "token-finops collect-statusline" } }
 ```
 
+That alone only *writes* `~/.token-finops/quota.json`; it doesn't render anything in the
+status line. If you want the status line itself to show runway (via `token-finops status
+--tool claude_code`), note that `status --tool claude_code` depends on `quota.json` already
+existing (see `adapters/claude_code.py`'s `quota()`, which reads that file — with it missing,
+`compute_runway()` reports `Status.UNKNOWN`). Claude Code's `statusLine.command` only runs
+**one** command, so both steps have to be chained into a single shell line:
+
+```jsonc
+// ~/.claude/settings.json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "input=$(cat); echo \"$input\" | token-finops collect-statusline >/dev/null 2>&1; token-finops status --format plain --tool claude_code --fresh"
+  }
+}
+```
+
+The `collect-statusline` half consumes Claude Code's JSON payload from stdin (hence
+`echo "$input" | ...`) and updates `quota.json`/`quota_history.jsonl`; the `status` half then
+reads that fresh quota to compute runway. `--fresh` skips `status`'s own cache so it always
+reflects the snapshot `collect-statusline` just wrote. Run them separately (as below) only
+when you're inspecting output by hand, not as the `statusLine.command` itself.
+
 ```bash
 token-finops report --tool claude_code --json
 ```
