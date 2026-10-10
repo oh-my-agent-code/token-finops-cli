@@ -34,6 +34,45 @@ def test_plain_hides_unlimited_by_default_and_marks_binding():
     assert "GM 6% inf" in out
 
 
+def _unknown_payload():
+    return [
+        {"tool": "claude_code", "display_name": "Claude Code", "window": "5h", "unit": "percent",
+         "used_fraction": None, "runway_days": None, "status": "UNKNOWN",
+         "notes": ["percent-based budget without provider snapshot: status UNKNOWN "
+                   "(Claude Code: wire `token-finops collect-statusline` as statusLine.command)"]},
+    ]
+
+
+def test_render_plain_surfaces_hint_on_unknown_status():
+    """Issue: compute_runway()'s helpful `notes` (why status is UNKNOWN) were only
+    surfaced by render_json; render_plain just showed a bare 'n/a' with no clue."""
+    snap = st.build_snapshot(_unknown_payload())
+    out = st.render(snap, "plain")
+    assert "CC" in out and "n/a" in out
+    assert "collect-statusline" in out
+
+
+def test_render_tmux_also_surfaces_hint_on_unknown_status():
+    snap = st.build_snapshot(_unknown_payload())
+    out = st.render(snap, "tmux")
+    assert "collect-statusline" in out
+
+
+def test_render_waybar_tooltip_surfaces_hint_on_unknown_status():
+    snap = st.build_snapshot(_unknown_payload())
+    d = json.loads(st.render(snap, "waybar"))
+    assert "collect-statusline" in d["tooltip"]
+
+
+def test_unknown_hint_absent_when_status_is_not_unknown():
+    """No regression: normal OK/WARN/UNLIMITED tools never get the UNKNOWN hint,
+    and existing plain-format assertions keep holding."""
+    snap = st.build_snapshot(payload())
+    out = st.render(snap, "plain")
+    assert "collect-statusline" not in out
+    assert out == "CP 29% 41d | CC 61% 2h! | GM 6% inf | binds: CC"
+
+
 def test_every_format_renders_without_error():
     snap = st.build_snapshot(payload())
     for fmt in st.RENDERERS:
