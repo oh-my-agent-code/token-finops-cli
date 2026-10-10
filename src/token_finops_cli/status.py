@@ -135,18 +135,42 @@ def _seg(t: dict) -> str:
     return f"{SHORT.get(t['tool'], t['tool'][:2].upper())} {pct(t.get('used_fraction'))} {_runway_of(t)}{GLYPH.get(t['status'], '')}"
 
 
+def _unknown_hint(t: dict) -> str:
+    """Short, parenthesised version of compute_runway()'s first `notes` entry for a
+    tool stuck at UNKNOWN -- without it the renderers just show a bare "n/a"/"?"
+    and the user has no clue why. Empty string if there's nothing to add."""
+    if t.get("status") != "UNKNOWN":
+        return ""
+    notes = t.get("notes") or []
+    if not notes:
+        return ""
+    note = notes[0]
+    if "collect-statusline" in note:
+        return " (run: token-finops collect-statusline)"
+    # fall back to the part before the first colon, e.g. "no burn estimate yet"
+    return f" ({note.split(':', 1)[0]})"
+
+
+def _first_unknown_hint(tools) -> str:
+    for t in tools:
+        hint = _unknown_hint(t)
+        if hint:
+            return hint
+    return ""
+
+
 def render_plain(snapshot, tools) -> str:
     parts = [_seg(t) for t in tools]
     b = snapshot.get("binding")
     tail = f" | binds: {SHORT.get(b['tool'], b['tool'])}" if b and len(tools) > 1 else ""
-    return (" | ".join(parts) or "token-finops: no data") + tail
+    return (" | ".join(parts) or "token-finops: no data") + _first_unknown_hint(tools) + tail
 
 
 def render_tmux(snapshot, tools) -> str:
     segs = []
     for t in tools:
         segs.append(f"#[fg={TMUX_COLOUR.get(t['status'], 'default')}]{_seg(t)}#[default]")
-    return " ".join(segs) or "token-finops: no data"
+    return (" ".join(segs) or "token-finops: no data") + _first_unknown_hint(tools)
 
 
 def render_starship(snapshot, tools) -> str:
@@ -161,7 +185,8 @@ def render_waybar(snapshot, tools) -> str:
     b = snapshot.get("binding") or (tools[0] if tools else None)
     text = render_plain(snapshot, tools)
     cls = (b["status"].lower() if b else "unknown")
-    tooltip = "\n".join(f"{t['display_name']}: {pct(t.get('used_fraction'))} used, runway {_runway_of(t)} ({t['status']})"
+    tooltip = "\n".join(f"{t['display_name']}: {pct(t.get('used_fraction'))} used, runway {_runway_of(t)} "
+                        f"({t['status']}){_unknown_hint(t)}"
                         for t in tools) or "no data"
     frac = (b or {}).get("used_fraction") or 0.0
     return json.dumps({"text": text, "tooltip": tooltip, "class": cls, "percentage": int(min(1.0, frac) * 100)})
@@ -223,7 +248,9 @@ def add_status_parser(sub):
     s.add_argument("--max-age", type=int, default=300, metavar="SECONDS",
                    help="rescan if the cache is older than this (default 300; 0 = always)")
     s.add_argument("--cache-file", default=None, help="override ~/.token-finops/last.json")
-    s.add_argument("--budget", type=float, default=None, help="Copilot allowance for a fresh scan")
+    s.add_argument("--budget", type=float, default=None,
+                   help="Copilot-only: allowance for a fresh scan (ignored for other tools; "
+                        "use --allowance there)")
     s.add_argument("--cycle-day", type=int, default=1)
     s.add_argument("--allowance", type=float, default=None)
 

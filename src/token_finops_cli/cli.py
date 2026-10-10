@@ -59,13 +59,22 @@ def _report_rows(args):
     if getattr(args, "db_path", None):
         os.environ["TOKEN_FINOPS_COPILOT_DB"] = args.db_path
         args.tool = ["copilot"]
+    budget = getattr(args, "budget", None)
+    warned_tools: set[str] = set()
     rows = []
     for ad in _adapters(getattr(args, "tool", None)):
         if not ad.available():
             continue
         if ad.tool == "copilot":
-            policy = ad.default_policy(getattr(args, "budget", None), cycle_day=getattr(args, "cycle_day", 1))
+            policy = ad.default_policy(budget, cycle_day=getattr(args, "cycle_day", 1))
         else:
+            # --budget is a dollar/AI-unit allowance; only Copilot's policy consumes it.
+            # Every other tool here uses a 0-1 fraction via --allowance, so a bare
+            # --budget would otherwise be silently dropped on the floor.
+            if budget is not None and ad.tool not in warned_tools:
+                print(f"note: --budget only applies to Copilot; ignored for {ad.tool} "
+                      f"(use --allowance for a 0-1 fraction instead)", file=sys.stderr)
+                warned_tools.add(ad.tool)
             policy = ad.default_policy(getattr(args, "allowance", None))
         events = ad.events(since=None)
         quota = ad.quota()
@@ -424,7 +433,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser("report", help="usage summary + runway per tool (default)")
     r.add_argument("--tool", action="append", choices=sorted(registry) or None, help="restrict to tool(s)")
-    r.add_argument("--budget", type=float, default=None, help="Copilot monthly AI-unit allowance")
+    r.add_argument("--budget", type=float, default=None,
+                   help="Copilot-only: monthly AI-unit allowance (ignored for other tools; "
+                        "use --allowance there)")
     r.add_argument("--cycle-day", type=int, default=1, help="Copilot cycle reset day (default 1, UTC)")
     r.add_argument("--allowance", type=float, default=None, help="allowance for non-Copilot tools (native unit)")
     r.add_argument("--compact", "-c", action="store_true", help="one line per tool")
