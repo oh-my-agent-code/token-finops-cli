@@ -45,9 +45,14 @@ def test_normalize_argv(argv, expected):
 
 
 def test_since_map():
+    # Compare against a `now` taken right here, not the module-level REAL_NOW: on a
+    # full-suite run REAL_NOW is captured at collection time, and this test can run
+    # well over 5 s later (the old tolerance), making the assertion flaky purely from
+    # suite runtime rather than any real bug in `_since`.
+    now = datetime.now(timezone.utc)
     assert _since("all") is None
-    assert abs((_since("7d") - (REAL_NOW - timedelta(days=7))).total_seconds()) < 5
-    assert abs((_since("1d") - (REAL_NOW - timedelta(days=1))).total_seconds()) < 5
+    assert abs((_since("7d") - (now - timedelta(days=7))).total_seconds()) < 5
+    assert abs((_since("1d") - (now - timedelta(days=1))).total_seconds()) < 5
     with pytest.raises(KeyError):
         _since("2d")
 
