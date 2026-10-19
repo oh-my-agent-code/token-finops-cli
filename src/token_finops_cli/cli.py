@@ -40,7 +40,7 @@ try:
 except PackageNotFoundError:
     # Not installed (e.g. running straight from a source checkout) -- keep this in
     # sync with pyproject.toml's [project].version by hand in that case only.
-    __version__ = "0.4.0"
+    __version__ = "0.5.0"
 from .core.runway import binding_constraint, compute_runway
 from .report import (compact_line, fmt_days, fmt_dt, fmt_tokens, fmt_usd, render_by_model,
                      render_runway, render_sessions_table, render_summary, summarize)
