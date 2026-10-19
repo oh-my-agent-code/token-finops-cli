@@ -3,7 +3,7 @@
 All notable changes to `token-finops-cli` are documented here, in the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.5.0] — 2026-10-19
 
 ### Added
 

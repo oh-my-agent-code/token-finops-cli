@@ -23,7 +23,7 @@ pip install token-finops-cli
 
 ```bash
 $ token-finops --version    # or: -V, or the `version` subcommand
-token-finops-cli 0.4.0
+token-finops-cli 0.5.0
 ```
 
 ## 60-second tour
@@ -48,7 +48,7 @@ Empty output? `doctor` says why, per tool, and what to do about it:
 $ token-finops doctor
 token-finops doctor — what `report` can and cannot see on this machine
 
-  token-finops-cli 0.4.0
+  token-finops-cli 0.5.0
   Python 3.12.7 (/usr/local/bin/python3)
   platform Darwin 24.5.0
 
