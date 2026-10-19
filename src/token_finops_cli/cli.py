@@ -2,6 +2,7 @@
 
     token-finops report   [--tool copilot|claude_code|codex|gemini_cli|hermes] [--compact] [--watch N] [--json]
                           [--budget N] [--cycle-day D]           # Copilot allowance / cycle
+                          [--window 5h|7d]                       # Claude Code/Codex: session vs week
                           [--online]                             # opt-in live quota (never on by default)
     token-finops sessions [--tool T] [--since 7d] [--limit 20]
     token-finops self-audit [--session ID|latest] [--config-dir ~/.claude]  # Claude Code, incl. sub-agents
@@ -27,11 +28,19 @@ import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Optional
 
 from .adapters import all_adapters
 from .adapters.base import registry
 from .core import config
+
+try:
+    __version__ = _pkg_version("token-finops-cli")
+except PackageNotFoundError:
+    # Not installed (e.g. running straight from a source checkout) -- keep this in
+    # sync with pyproject.toml's [project].version by hand in that case only.
+    __version__ = "0.4.0"
 from .core.runway import binding_constraint, compute_runway
 from .report import (compact_line, fmt_days, fmt_dt, fmt_tokens, fmt_usd, render_by_model,
                      render_runway, render_sessions_table, render_summary, summarize)
@@ -64,27 +73,41 @@ def _report_rows(args):
         os.environ["TOKEN_FINOPS_COPILOT_DB"] = args.db_path
         args.tool = ["copilot"]
     budget = getattr(args, "budget", None)
+    window = getattr(args, "window", None)
+    _WINDOW_TOOLS = ("claude_code", "codex")
     warned_tools: set[str] = set()
+    warned_window_tools: set[str] = set()
     rows = []
     for ad in _adapters(getattr(args, "tool", None)):
         if not ad.available():
             continue
+        # --budget is a dollar/AI-unit allowance; only Copilot's policy consumes it.
+        # Every other tool here uses a 0-1 fraction via --allowance, so a bare
+        # --budget would otherwise be silently dropped on the floor.
+        if budget is not None and ad.tool != "copilot" and ad.tool not in warned_tools:
+            print(f"note: --budget only applies to Copilot; ignored for {ad.tool} "
+                  f"(use --allowance for a 0-1 fraction instead)", file=sys.stderr)
+            warned_tools.add(ad.tool)
+        # --window only means anything for the two tools with a real second
+        # provider-reported rolling window (Claude Code's 5h/7d, Codex's
+        # primary/secondary); every other tool has at most one window, so a
+        # bare --window would otherwise be silently dropped on the floor, same
+        # reasoning as --budget above.
+        if window is not None and ad.tool not in _WINDOW_TOOLS and ad.tool not in warned_window_tools:
+            print(f"note: --window only applies to Claude Code/Codex; ignored for {ad.tool}",
+                  file=sys.stderr)
+            warned_window_tools.add(ad.tool)
         # `config.allowance()`/`config.cycle_day()` already fold in the CLI flags
         # (installed by main() via set_cli_overrides), the env vars and config.json,
         # in that order; None means "keep the adapter's own default".
         if ad.tool == "copilot":
             policy = ad.default_policy(config.allowance("copilot"), cycle_day=config.cycle_day())
+        elif ad.tool in _WINDOW_TOOLS:
+            policy = ad.default_policy(config.allowance(ad.tool), window=window or "5h")
         else:
-            # --budget is a dollar/AI-unit allowance; only Copilot's policy consumes it.
-            # Every other tool here uses a 0-1 fraction via --allowance, so a bare
-            # --budget would otherwise be silently dropped on the floor.
-            if budget is not None and ad.tool not in warned_tools:
-                print(f"note: --budget only applies to Copilot; ignored for {ad.tool} "
-                      f"(use --allowance for a 0-1 fraction instead)", file=sys.stderr)
-                warned_tools.add(ad.tool)
             policy = ad.default_policy(config.allowance(ad.tool))
         events = ad.events(since=None)
-        quota = ad.quota()
+        quota = ad.quota(window=window or "5h") if ad.tool in _WINDOW_TOOLS else ad.quota()
         # --online (T-03, opt-in): a live provider-reported quota replaces the offline
         # one *only on success*. Every failure -- no flag, no credentials, no network,
         # a 429, a drifted response shape -- leaves `quota` exactly as the offline path
@@ -92,7 +115,7 @@ def _report_rows(args):
         # report rather than an error (see online.online_quota).
         if getattr(args, "online", False):
             from .online import online_quota
-            live = online_quota(ad.tool)
+            live = online_quota(ad.tool, window=window or "5h")
             if live is not None:
                 quota = live
                 # A live snapshot is the provider's own number, so it outranks the local
@@ -449,6 +472,10 @@ def cmd_adapters(args) -> str:
     return "\n".join(lines)
 
 
+def cmd_version(args) -> str:
+    return f"token-finops-cli {__version__}"
+
+
 # --------------------------------------------------------------------------- #
 def budget_override_parser() -> argparse.ArgumentParser:
     """The budget-policy overrides, as a shared parent parser.
@@ -469,6 +496,10 @@ def budget_override_parser() -> argparse.ArgumentParser:
                    help="allowance for non-Copilot tools, native unit ($TOKEN_FINOPS_ALLOWANCE)")
     g.add_argument("--cycle-day", type=int, default=None,
                    help="monthly cycle reset day, UTC ($TOKEN_FINOPS_CYCLE_DAY, budget.cycle_day; default 1)")
+    g.add_argument("--window", choices=["5h", "7d"], default=None,
+                   help="Claude Code/Codex only: which provider-reported rolling window to report "
+                        "against -- 5h (session, default) or 7d (week); ignored for other tools, "
+                        "which don't have a second provider window")
     return p
 
 
@@ -498,8 +529,11 @@ def apply_config_defaults(args) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="token-finops", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--version", "-V", action="version", version=f"token-finops-cli {__version__}")
     sub = p.add_subparsers(dest="command")
     budget = budget_override_parser()
+
+    sub.add_parser("version", help="print the installed version and exit")
 
     r = sub.add_parser("report", parents=[budget], help="usage summary + runway per tool (default)")
     r.add_argument("--tool", action="append", choices=sorted(registry) or None, help="restrict to tool(s)")
@@ -567,7 +601,8 @@ def _normalize_argv(argv):
     if not argv:
         return ["report"]
     known = {"report", "sessions", "self-audit", "collect-statusline", "adapters", "doctor", "savings",
-             "break-even", "synth", "status", "burn", "cost-per-token", "-h", "--help"}
+             "break-even", "synth", "status", "burn", "cost-per-token", "version",
+             "-h", "--help", "-V", "--version"}
     return argv if argv[0] in known else ["report", *argv]
 
 
@@ -579,7 +614,7 @@ def main(argv=None):
     apply_config_defaults(args)
     handlers = {"report": cmd_report, "sessions": cmd_sessions, "self-audit": cmd_self_audit,
                 "collect-statusline": cmd_collect_statusline, "adapters": cmd_adapters,
-                "synth": cmd_synth}
+                "synth": cmd_synth, "version": cmd_version}
     if args.command == "burn":
         from .burn import cmd_burn
         print(cmd_burn(args))

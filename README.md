@@ -21,6 +21,11 @@ pipx install token-finops-cli
 pip install token-finops-cli
 ```
 
+```bash
+$ token-finops --version    # or: -V, or the `version` subcommand
+token-finops-cli 0.4.0
+```
+
 ## 60-second tour
 
 ```bash
@@ -202,6 +207,14 @@ Claude Code — window: 5h (resets 2026-09-05 12:29 UTC)
   pace:     1.00 (on pace)
   burn:     20.0% per hour (from snapshots)
   runway:   3.0h vs 3.0h left -> OK
+```
+
+By default `report`/`status` only track the 5h session window — `--window 7d` switches to the
+rolling 7-day window instead (same flag on Codex, which has the identical primary/secondary
+rate-limit shape). There is no third window in either provider's payload:
+
+```bash
+token-finops report --tool claude_code --window 7d --json
 ```
 
 ## Status bars: tmux, starship, waybar, SwiftBar

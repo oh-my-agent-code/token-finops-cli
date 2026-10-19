@@ -519,19 +519,25 @@ FETCHERS = {
 }
 
 
-def online_quota(tool: str) -> Optional[QuotaSnapshot]:
+def online_quota(tool: str, window: str = "5h") -> Optional[QuotaSnapshot]:
     """The live `QuotaSnapshot` for `tool`, or `None` — the single entry point
     `report`/`status` call when `--online` is set.
 
     The blanket `except Exception` is the fail-closed guarantee in one place:
     whatever a reverse-engineered endpoint decides to return tomorrow, the
     caller keeps its offline snapshot and the user sees an ordinary report.
-    A tool with no fetcher (codex, cline, aider, ...) simply returns `None`."""
+    A tool with no fetcher (codex, cline, aider, ...) simply returns `None`.
+    `window` only means anything for claude_code (the only live fetcher with
+    a second rolling window); every other fetcher is a zero-arg callable and
+    ignores it."""
     fetcher = FETCHERS.get(tool)
     if fetcher is None:
         return None
     try:
-        snap = fetcher()
+        if tool == "claude_code":
+            snap = fetcher(window="seven_day" if window == "7d" else "five_hour")
+        else:
+            snap = fetcher()
     except Exception:       # noqa: BLE001 — fail closed to the offline path, always
         return None
     return snap if isinstance(snap, QuotaSnapshot) else None

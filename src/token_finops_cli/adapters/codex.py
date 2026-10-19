@@ -292,14 +292,17 @@ class CodexAdapter(BaseAdapter):
         secondary = _snapshot_from_window(rl.get("secondary"), "7d", observed_at)
         return primary, secondary
 
-    def quota(self) -> Optional[QuotaSnapshot]:
-        primary, _secondary = self.quotas()
-        return primary
+    def quota(self, window: str = "5h") -> Optional[QuotaSnapshot]:
+        """`window`: "5h" (primary, default) or "7d" (secondary) -- the only
+        two rate-limit windows Codex's rollout payload carries."""
+        primary, secondary = self.quotas()
+        return primary if window == "5h" else secondary
 
-    def default_policy(self, allowance: Optional[float] = None) -> BudgetPolicy:
+    def default_policy(self, allowance: Optional[float] = None, window: str = "5h") -> BudgetPolicy:
+        length = timedelta(hours=5) if window == "5h" else timedelta(days=7)
         return BudgetPolicy(
-            tool=self.tool, window_id="5h", unit=Unit.PERCENT, cycle=CycleKind.ROLLING,
-            window_length=timedelta(hours=5), allowance=1.0 if allowance is None else allowance,
+            tool=self.tool, window_id=window, unit=Unit.PERCENT, cycle=CycleKind.ROLLING,
+            window_length=length, allowance=1.0 if allowance is None else allowance,
             source_of_truth="provider_pct",
         )
 

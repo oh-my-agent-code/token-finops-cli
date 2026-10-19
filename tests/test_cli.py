@@ -62,6 +62,36 @@ def test_sessions_help_runs():
     assert "--limit" in result.stdout
 
 
+def test_version_flag_and_subcommand_agree(home):
+    """`--version`, `-V` and the `version` subcommand must all print the same
+    thing and exit 0 -- three entry points to the one piece of information a
+    user reaches for first when filing a bug report."""
+    from token_finops_cli import __version__
+
+    outputs = []
+    for argv in (["--version"], ["-V"], ["version"]):
+        result = subprocess.run(
+            [sys.executable, "-m", "token_finops_cli.cli", *argv],
+            capture_output=True, text=True, check=False, env=_ENV,
+        )
+        assert result.returncode == 0, argv
+        outputs.append(result.stdout.strip())
+    assert len(set(outputs)) == 1, outputs
+    assert outputs[0] == f"token-finops-cli {__version__}"
+
+
+def test_version_is_not_mistaken_for_a_report_argument():
+    """`_normalize_argv` prefixes a bare flag list with "report" when the first
+    token isn't a known subcommand -- "version" (and -V/--version) must be in
+    that known set, or `token-finops version` silently becomes `report version`
+    and fails with argparse's "unrecognized arguments"."""
+    from token_finops_cli.cli import _normalize_argv
+
+    assert _normalize_argv(["version"]) == ["version"]
+    assert _normalize_argv(["--version"]) == ["--version"]
+    assert _normalize_argv(["-V"]) == ["-V"]
+
+
 def test_budget_help_notes_copilot_only():
     """--help text must make clear --budget is Copilot-specific (issue: it was
     silently ignored for every other tool, with no hint in --help either)."""

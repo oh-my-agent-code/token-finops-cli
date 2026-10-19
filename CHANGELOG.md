@@ -3,6 +3,22 @@
 All notable changes to `token-finops-cli` are documented here, in the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **`--window 5h|7d`** on `report`/`status` — Claude Code and Codex CLI both expose two
+  provider-reported rolling windows (a 5h session and a 7d week; there is no third window in
+  either payload). Previously `report --tool claude_code` could only ever show the 5h window
+  even though the 7d percentage was already captured in `quota.json`/`quota_history.jsonl` (and
+  visible only in `collect-statusline`'s own compact bar) — a real gap where a user could be
+  fine on the session window and about to blow the weekly one with no way to check via `report`.
+  `--window` is a no-op with a one-time stderr note for every other tool, which has at most one
+  provider window. Also threaded through `--online`'s live Claude Code fetcher.
+- **`token-finops --version`/`-V`/`version`** — all three print the installed version and exit 0
+  (version now reads from installed package metadata, shared by `__init__.__version__` and
+  `doctor`'s header rather than two separate copies).
+
 ## [0.4.0] — 2026-09-24
 
 ### Security
