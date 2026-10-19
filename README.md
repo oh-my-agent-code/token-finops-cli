@@ -21,6 +21,11 @@ pipx install token-finops-cli
 pip install token-finops-cli
 ```
 
+```bash
+$ token-finops --version    # or: -V, or the `version` subcommand
+token-finops-cli 0.4.0
+```
+
 ## 60-second tour
 
 ```bash

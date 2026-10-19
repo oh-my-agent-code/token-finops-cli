@@ -15,6 +15,9 @@ All notable changes to `token-finops-cli` are documented here, in the format of
   fine on the session window and about to blow the weekly one with no way to check via `report`.
   `--window` is a no-op with a one-time stderr note for every other tool, which has at most one
   provider window. Also threaded through `--online`'s live Claude Code fetcher.
+- **`token-finops --version`/`-V`/`version`** — all three print the installed version and exit 0
+  (version now reads from installed package metadata, shared by `__init__.__version__` and
+  `doctor`'s header rather than two separate copies).
 
 ## [0.4.0] — 2026-09-24
 

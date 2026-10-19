@@ -28,11 +28,19 @@ import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Optional
 
 from .adapters import all_adapters
 from .adapters.base import registry
 from .core import config
+
+try:
+    __version__ = _pkg_version("token-finops-cli")
+except PackageNotFoundError:
+    # Not installed (e.g. running straight from a source checkout) -- keep this in
+    # sync with pyproject.toml's [project].version by hand in that case only.
+    __version__ = "0.4.0"
 from .core.runway import binding_constraint, compute_runway
 from .report import (compact_line, fmt_days, fmt_dt, fmt_tokens, fmt_usd, render_by_model,
                      render_runway, render_sessions_table, render_summary, summarize)
@@ -464,6 +472,10 @@ def cmd_adapters(args) -> str:
     return "\n".join(lines)
 
 
+def cmd_version(args) -> str:
+    return f"token-finops-cli {__version__}"
+
+
 # --------------------------------------------------------------------------- #
 def budget_override_parser() -> argparse.ArgumentParser:
     """The budget-policy overrides, as a shared parent parser.
@@ -517,8 +529,11 @@ def apply_config_defaults(args) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="token-finops", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--version", "-V", action="version", version=f"token-finops-cli {__version__}")
     sub = p.add_subparsers(dest="command")
     budget = budget_override_parser()
+
+    sub.add_parser("version", help="print the installed version and exit")
 
     r = sub.add_parser("report", parents=[budget], help="usage summary + runway per tool (default)")
     r.add_argument("--tool", action="append", choices=sorted(registry) or None, help="restrict to tool(s)")
@@ -586,7 +601,8 @@ def _normalize_argv(argv):
     if not argv:
         return ["report"]
     known = {"report", "sessions", "self-audit", "collect-statusline", "adapters", "doctor", "savings",
-             "break-even", "synth", "status", "burn", "cost-per-token", "-h", "--help"}
+             "break-even", "synth", "status", "burn", "cost-per-token", "version",
+             "-h", "--help", "-V", "--version"}
     return argv if argv[0] in known else ["report", *argv]
 
 
@@ -598,7 +614,7 @@ def main(argv=None):
     apply_config_defaults(args)
     handlers = {"report": cmd_report, "sessions": cmd_sessions, "self-audit": cmd_self_audit,
                 "collect-statusline": cmd_collect_statusline, "adapters": cmd_adapters,
-                "synth": cmd_synth}
+                "synth": cmd_synth, "version": cmd_version}
     if args.command == "burn":
         from .burn import cmd_burn
         print(cmd_burn(args))
