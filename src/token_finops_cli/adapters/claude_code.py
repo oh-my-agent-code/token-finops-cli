@@ -157,14 +157,18 @@ class ClaudeCodeAdapter(BaseAdapter):
         for path in self.transcript_paths():
             yield from parse_transcript(path, since)
 
+    _WINDOW_KEYS = {"5h": "five_hour", "7d": "seven_day",
+                    "five_hour": "five_hour", "seven_day": "seven_day"}
+
     @staticmethod
-    def _snapshot(data, window: str = "five_hour") -> Optional[QuotaSnapshot]:
+    def _snapshot(data, window: str = "5h") -> Optional[QuotaSnapshot]:
         # A status-line snapshot is written by whatever Claude Code version is
         # installed; tolerate any shape rather than raising on a drifted one.
         if not isinstance(data, dict):
             return None
         rate_limits = data.get("rate_limits")
-        rl = rate_limits.get(window) if isinstance(rate_limits, dict) else None
+        key = ClaudeCodeAdapter._WINDOW_KEYS.get(window, window)
+        rl = rate_limits.get(key) if isinstance(rate_limits, dict) else None
         if not isinstance(rl, dict) or rl.get("used_percentage") is None:
             return None
         try:
@@ -189,14 +193,16 @@ class ClaudeCodeAdapter(BaseAdapter):
         except (TypeError, ValueError):
             observed_at = datetime.now(timezone.utc)
         return QuotaSnapshot(
-            tool="claude_code", window_id="5h" if window == "five_hour" else "7d",
+            tool="claude_code", window_id="5h" if key == "five_hour" else "7d",
             observed_at=observed_at,
             used_fraction=used_pct / 100.0,
             resets_at=resets_dt, source="claude_statusline",
         )
 
-    def quota(self, window: str = "five_hour") -> Optional[QuotaSnapshot]:
-        """Latest snapshot written by the status-line collector, if any."""
+    def quota(self, window: str = "5h") -> Optional[QuotaSnapshot]:
+        """Latest snapshot written by the status-line collector, if any.
+        `window`: "5h" (session, default) or "7d" (week) -- the only two
+        windows Anthropic's statusline payload carries."""
         try:
             with open(QUOTA_FILE, encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -204,7 +210,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             return None
         return self._snapshot(data, window)
 
-    def quota_history(self, window: str = "five_hour", limit: int = 500) -> list[QuotaSnapshot]:
+    def quota_history(self, window: str = "5h", limit: int = 500) -> list[QuotaSnapshot]:
         """All snapshots the collector appended (newest last)."""
         out: list[QuotaSnapshot] = []
         try:
@@ -221,11 +227,15 @@ class ClaudeCodeAdapter(BaseAdapter):
                 out.append(snap)
         return out
 
-    def default_policy(self, allowance: Optional[float] = None) -> BudgetPolicy:
-        # Percent-based rolling 5h window; allowance 1.0 == 100 %.
+    def default_policy(self, allowance: Optional[float] = None, window: str = "5h") -> BudgetPolicy:
+        # Percent-based rolling window; allowance 1.0 == 100 %. `window` picks which
+        # of Anthropic's two rolling windows this policy tracks -- "5h" (the
+        # session) or "7d" (the week); there is no third window in the real
+        # payload (see `_snapshot`'s `rate_limits` keys).
+        length = timedelta(hours=5) if window == "5h" else timedelta(days=7)
         return BudgetPolicy(
-            tool=self.tool, window_id="5h", unit=Unit.PERCENT, cycle=CycleKind.ROLLING,
-            window_length=timedelta(hours=5), allowance=1.0 if allowance is None else allowance,
+            tool=self.tool, window_id=window, unit=Unit.PERCENT, cycle=CycleKind.ROLLING,
+            window_length=length, allowance=1.0 if allowance is None else allowance,
             source_of_truth="provider_pct",
         )
 

@@ -61,6 +61,25 @@ def test_quota_returns_used_fraction_and_resets_at(tmp_path, monkeypatch):
     assert secondary is not None and secondary.window_id == "7d"
 
 
+def test_quota_window_arg_selects_primary_or_secondary(tmp_path, monkeypatch):
+    adapter, _ = _make_adapter(tmp_path, monkeypatch, days=2, sessions_per_day=1, seed=4)
+    five_h = adapter.quota(window="5h")
+    seven_d = adapter.quota(window="7d")
+    assert five_h is not None and five_h.window_id == "5h"
+    assert seven_d is not None and seven_d.window_id == "7d"
+    assert five_h.used_fraction != seven_d.used_fraction
+
+
+def test_default_policy_window_arg_sets_window_id_and_length(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    adapter, _ = _make_adapter(tmp_path, monkeypatch, days=1, sessions_per_day=1, seed=5)
+    assert adapter.default_policy().window_id == "5h"
+    p7 = adapter.default_policy(window="7d")
+    assert p7.window_id == "7d"
+    assert p7.window_length == timedelta(days=7)
+
+
 def test_default_policy_unit_is_percent(tmp_path, monkeypatch):
     adapter, _ = _make_adapter(tmp_path, monkeypatch, days=1, sessions_per_day=1, seed=5)
     policy = adapter.default_policy()

@@ -395,7 +395,7 @@ def test_report_online_applies_the_live_quota_over_the_offline_one(tmp_path, mon
 
     live = QS(tool="copilot", window_id="month", observed_at=NOW, used_fraction=0.93,
               source="copilot_online")
-    monkeypatch.setattr(online, "online_quota", lambda tool: live)
+    monkeypatch.setattr(online, "online_quota", lambda tool, window="5h": live)
     payload = cli.collect_report_payload(_copilot_args(tmp_path, online=True, compact=False))
     assert payload[0]["used_fraction"] == pytest.approx(0.93)
 

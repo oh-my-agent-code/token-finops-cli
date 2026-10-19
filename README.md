@@ -204,6 +204,14 @@ Claude Code — window: 5h (resets 2026-09-05 12:29 UTC)
   runway:   3.0h vs 3.0h left -> OK
 ```
 
+By default `report`/`status` only track the 5h session window — `--window 7d` switches to the
+rolling 7-day window instead (same flag on Codex, which has the identical primary/secondary
+rate-limit shape). There is no third window in either provider's payload:
+
+```bash
+token-finops report --tool claude_code --window 7d --json
+```
+
 ## Status bars: tmux, starship, waybar, SwiftBar
 
 ```bash

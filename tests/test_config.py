@@ -331,13 +331,16 @@ def test_invalid_window_hours_keeps_the_adapter_default(monkeypatch, capsys, bad
     assert "window_hours" in capsys.readouterr().err
 
 
-def _quota_file(home, used_pct: float, resets_at: datetime) -> None:
+def _quota_file(home, used_pct: float, resets_at: datetime, seven_day_pct: float = None) -> None:
     d = home / ".token-finops"
     d.mkdir(parents=True, exist_ok=True)
+    rate_limits = {"five_hour": {"used_percentage": used_pct, "resets_at": resets_at.isoformat()}}
+    if seven_day_pct is not None:
+        rate_limits["seven_day"] = {"used_percentage": seven_day_pct,
+                                    "resets_at": (resets_at + timedelta(days=5)).isoformat()}
     (d / "quota.json").write_text(json.dumps({
         "observed_at": (REAL_NOW - timedelta(minutes=1)).isoformat(),
-        "rate_limits": {"five_hour": {"used_percentage": used_pct,
-                                      "resets_at": resets_at.isoformat()}},
+        "rate_limits": rate_limits,
     }), encoding="utf-8")
 
 
@@ -352,6 +355,33 @@ def test_configured_window_never_moves_a_real_resets_at(home, run_cli, write_con
     d = json.loads(run_cli("report", "--json", "--tool", "claude_code"))[0]
     assert d["resets_at"].startswith(resets.isoformat(sep=" ")[:16])
     assert d["used_fraction"] == pytest.approx(0.4)
+
+
+def test_window_flag_selects_5h_or_7d_for_claude_code(home, run_cli):
+    """`--window` picks which of Anthropic's two rolling windows `report` tracks --
+    the default (no flag) keeps the historical 5h-only behaviour."""
+    build_claude_tree(home / ".claude", REAL_NOW - timedelta(hours=1))
+    resets = (REAL_NOW + timedelta(hours=2)).replace(microsecond=0)
+    _quota_file(home, 40.0, resets, seven_day_pct=12.0)
+
+    default = json.loads(run_cli("report", "--json", "--tool", "claude_code"))[0]
+    assert default["window"] == "5h" and default["used_fraction"] == pytest.approx(0.4)
+
+    week = json.loads(run_cli("report", "--json", "--tool", "claude_code", "--window", "7d"))[0]
+    assert week["window"] == "7d" and week["used_fraction"] == pytest.approx(0.12)
+
+
+def test_window_flag_is_ignored_with_a_warning_for_other_tools(copilot_db, home, run_cli, capsys):
+    """Copilot has no second provider-reported window; `--window` must not silently
+    change anything for it, and must say so instead of acting like --budget's
+    historical silent-drop bug."""
+    from token_finops_cli.cli import main
+
+    main(["report", "--json", "--tool", "copilot", "--window", "7d"])
+    out, err = capsys.readouterr()
+    assert "note: --window only applies to Claude Code/Codex; ignored for copilot" in err
+    d = json.loads(out)[0]
+    assert d["window"] == "month"  # unaffected by the ignored --window
 
 
 def test_claude_code_status_follows_the_configured_thresholds(home, run_cli, write_config):
